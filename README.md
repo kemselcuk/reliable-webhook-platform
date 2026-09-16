@@ -11,7 +11,8 @@ Phase 1 currently provides the repository foundation and core PostgreSQL persist
 - PostgreSQL 17 and single-node Apache Kafka 4.3.1 Compose services;
 - Dockerfiles, readiness health checks, and GitHub Actions checks;
 - a Flyway-managed PostgreSQL schema for webhook endpoints, events, deliveries, and delivery attempts;
-- Spring Data JPA repositories with JSONB event payload mapping and database constraints.
+- Spring Data JPA repositories with JSONB event payload mapping and database constraints;
+- a minimal browser workflow for endpoint registration/listing and event submission to selected endpoints.
 
 The transactional outbox, Kafka publisher/worker, retries, signing, and metrics are intentionally deferred to later phases. The current REST increment supports endpoint registration/listing and explicit event fan-out to selected enabled endpoints; it is not yet an asynchronous delivery guarantee.
 
@@ -98,7 +99,7 @@ docker compose up --build -d
 docker compose ps
 ```
 
-Open `http://localhost:3000`. Compose starts PostgreSQL and Kafka first, waits for their health checks, then starts the backend and waits for backend readiness before starting the frontend. Stop the stack with:
+Open `http://localhost:3000`. From the UI, create an endpoint, select it in the event form, and submit the sample JSON payload. Phase 1 stores the event and its `PENDING` delivery record; actual webhook publication starts in later phases. Compose starts PostgreSQL and Kafka first, waits for their health checks, then starts the backend and waits for backend readiness before starting the frontend. Stop the stack with:
 
 ```bash
 docker compose down

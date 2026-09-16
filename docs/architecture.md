@@ -4,7 +4,7 @@
 
 The platform is designed as a small, fully local webhook delivery system. PostgreSQL will be the authoritative store for business state; Kafka will provide asynchronous transport, buffering, and horizontal consumption. A React UI will exercise the real HTTP API and show operational state without becoming a second source of truth.
 
-Phase 1 now includes the PostgreSQL persistence foundation and REST/service increment: a Flyway-managed core schema, JPA mappings, repositories, endpoint registration/listing, and explicit event targeting to enabled endpoints. Kafka clients, the outbox, delivery workers, authentication, retries, and signing remain later-phase behavior; the target-flow sections below describe that approved direction rather than current guarantees.
+Phase 1 now includes the PostgreSQL persistence foundation, REST/service increment, and minimal React workflow: a Flyway-managed core schema, JPA mappings, repositories, endpoint registration/listing, and explicit event targeting to enabled endpoints through either REST or the browser. Kafka clients, the outbox, delivery workers, authentication, retries, and signing remain later-phase behavior; the target-flow sections below describe that approved direction rather than current guarantees.
 
 ## Current domain persistence
 

@@ -120,4 +120,4 @@ Do not treat an internally completed coding increment as a completed phase; the 
 
 ## Current recovery point
 
-At the latest update, Phase 0 is complete on `main` and work is on `feature/phase-1-core-domain`. The PostgreSQL/Flyway foundation and endpoint/event REST APIs are committed and pushed; the minimal Phase 1 React UI is the active final implementation increment. Re-read `docs/PLAN.md` and Git history for any newer state before relying on this snapshot.
+At the latest update, Phases 0 and 1 are complete. Phase 1 provides the PostgreSQL/Flyway core model, endpoint/event REST APIs, and minimal React endpoint/event workflow. Do not begin Phase 2 until the Phase 1 branch/CI state has been checked and the user explicitly asks to continue after the phase-boundary report. Re-read `docs/PLAN.md` and Git history for the exact current branch and merge state.
