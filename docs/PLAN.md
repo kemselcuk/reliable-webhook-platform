@@ -21,37 +21,40 @@ The polling publisher may publish a Kafka record and crash before marking its ou
 
 ## Current status
 
-- Current phase: Phase 0 — Repository foundation
-- Overall status: `[~]` In progress
-- Completed: repository inspection; empty GitHub remote confirmed; architecture review completed; development plan initialized
-- Next: scaffold backend/frontend, local infrastructure, CI, foundational documentation, then verify all Phase 0 acceptance criteria
+- Current phase: Phase 1 — Core domain + PostgreSQL is next
+- Overall status: Phase 0 `[x]` completed; Phase 1 `[ ]` planned
+- Completed: repository setup; agent working agreement; backend/frontend scaffolds and builds; unit/HTTP integration tests; healthy local Compose stack with PostgreSQL, Kafka, backend, and frontend; CI; foundational documentation; manager review
+- Next: merge the verified Phase 0 feature branch into `main`, verify `main` and its CI run, then create the Phase 1 feature branch and scope the first core-domain increment
+- Environment note: local port `5432` was already occupied during final verification, so the full stack was successfully verified with the documented host-port overrides (`55432/59092/18080/13000`). This does not change container ports or application topology.
 - Intentionally deferred: CDC/Debezium, multi-tenancy, full secret rotation, OpenTelemetry, hosted deployment, and business-state use of a Kafka DLQ
 
-## Phase 0 — Repository foundation `[~]`
+## Phase 0 — Repository foundation `[x]`
 
 Features and tasks:
 
 - [x] Inspect local workspace and GitHub remote without overwriting existing work
 - [x] Initialize `main`, connect `origin`, and create this living plan
-- [ ] Create `feature/phase-0-foundation`
-- [ ] Scaffold Java 21 Spring Boot backend with Maven
-- [ ] Scaffold minimal React + TypeScript frontend
-- [ ] Add Dockerfiles and Docker Compose foundation
-- [ ] Add PostgreSQL and single-node Apache Kafka in local Compose
-- [ ] Add backend/frontend health-oriented starter behavior
-- [ ] Add README, architecture documentation, and Git/GitHub workflow
-- [ ] Add GitHub Actions jobs for backend build/tests and frontend build/tests
-- [ ] Build backend and frontend locally
-- [ ] Start PostgreSQL/Kafka locally and verify health/readiness
-- [ ] Review, update this plan, commit/push, merge to `main`, and verify `main`
+- [x] Create `feature/phase-0-foundation`
+- [x] Add the root agent working agreement and session-recovery workflow
+- [x] Scaffold Java 21 Spring Boot backend with Maven
+- [x] Scaffold minimal React + TypeScript frontend
+- [x] Add Dockerfiles and Docker Compose foundation
+- [x] Add PostgreSQL and single-node Apache Kafka in local Compose
+- [x] Add backend/frontend health-oriented starter behavior
+- [x] Add README, architecture documentation, and Git/GitHub workflow
+- [x] Add GitHub Actions jobs for backend build/tests and frontend build/tests
+- [x] Build backend and frontend locally
+- [x] Start PostgreSQL/Kafka locally and verify health/readiness
+- [x] Build and verify the complete Compose path, including backend readiness, frontend health, and nginx API proxying
+- [x] Review the implementation, tests, documentation, and Phase 0 acceptance evidence
 
 Acceptance criteria:
 
-- [ ] Backend build succeeds
-- [ ] Frontend build succeeds
-- [ ] PostgreSQL and Kafka start locally with Docker Compose and pass health checks
-- [ ] CI definition covers build, unit tests, and an integration-test path
-- [ ] Foundational docs explain setup, architecture direction, workflow, and current status
+- [x] Backend build succeeds
+- [x] Frontend build succeeds
+- [x] PostgreSQL and Kafka start locally with Docker Compose and pass health checks
+- [x] CI definition covers build, unit tests, and an integration-test path
+- [x] Foundational docs explain setup, architecture direction, workflow, and current status
 
 ## Phase 1 — Core domain + PostgreSQL `[ ]`
 
@@ -90,6 +93,8 @@ Features and tasks:
 
 - [ ] Configure topic, producer, consumer group, partitions, keys, acknowledgements, and error handling
 - [ ] Implement atomic delivery claim/check and current-state load
+- [ ] Implement lease/token-based delivery claiming with a claim timeout and stale-claim recovery
+- [ ] Keep external HTTP outside database transactions/row locks and validate the lease token on completion
 - [ ] Implement pooled HTTP delivery with connect/response timeouts and controlled concurrency
 - [ ] Persist `DeliveryAttempt` and success/failure state
 - [ ] Add WireMock/Testcontainers end-to-end tests
@@ -98,6 +103,7 @@ Acceptance criteria:
 
 - [ ] Event submission reaches a WireMock webhook asynchronously through PostgreSQL, outbox, Kafka, and worker
 - [ ] A 2xx response results in `SUCCESS` with a recorded attempt
+- [ ] A crashed worker's expired lease is recovered, and a stale worker cannot overwrite a newer claim
 
 ## Phase 4 — Reliable retry `[ ]`
 
@@ -212,3 +218,4 @@ Record future material changes as: `Planned`, `Implemented`, `Reason`, and `Trad
 - Requested implementer configuration is available and will be used: Luna with `xhigh` reasoning.
 - The active root session cannot change its own model at runtime. It remains the manager/reviewer at the current environment-provided model and reasoning level; this is the closest available behavior to the requested Sol/high manager without silently substituting a spawned third role.
 - Local tools detected at initialization: Java 21 is installed (Maven itself currently launches on Java 25), Maven 3.9.11, Node.js 22.23.2, npm 10.9.8, Docker 28.3.2, and Docker Compose 2.38.2.
+- Phase 0 final verification used host-port overrides because local port `5432` was occupied. PostgreSQL, Kafka, backend, and frontend all reported healthy; direct backend health/readiness, frontend HTTP, and frontend-to-backend proxy requests returned HTTP 200. The frontend healthcheck was corrected to use `127.0.0.1` because the image resolved `localhost` to IPv6 while nginx listened on IPv4.
