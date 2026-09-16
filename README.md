@@ -79,6 +79,15 @@ Open `http://localhost:3000`. Compose starts PostgreSQL and Kafka first, waits f
 docker compose down
 ```
 
+If one of the default host ports is already in use, override only the host-side mappings without changing the container topology. For example:
+
+```bash
+POSTGRES_PORT=55432 KAFKA_PORT=59092 BACKEND_PORT=18080 FRONTEND_PORT=13000 \
+  docker compose up --build -d
+```
+
+The same values can be placed in a local `.env` copied from `.env.example`. With the example overrides above, open `http://localhost:13000`.
+
 Named volumes preserve local PostgreSQL and Kafka data. To remove those local volumes intentionally, use `docker compose down --volumes`.
 
 Validate the rendered Compose model without starting containers:
