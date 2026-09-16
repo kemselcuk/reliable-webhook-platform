@@ -23,8 +23,9 @@ The polling publisher may publish a Kafka record and crash before marking its ou
 
 - Current phase: Phase 0 — Repository foundation
 - Overall status: `[~]` In progress
-- Completed: repository inspection; empty GitHub remote confirmed; architecture review completed; development plan initialized
-- Next: scaffold backend/frontend, local infrastructure, CI, foundational documentation, then verify all Phase 0 acceptance criteria
+- Completed: repository setup; backend/frontend scaffolds and builds; unit/HTTP integration tests; Compose definition; CI; foundational documentation; manager review
+- Next: verify PostgreSQL/Kafka and the full stack against a responsive Docker daemon, then finish Phase 0 review/merge
+- Environment blocker: the active Codex session can see the `desktop-linux` socket but Docker API `_ping`, `docker ps`, and `docker desktop status` time out. Existing user containers were not modified. Actual container health remains intentionally unverified.
 - Intentionally deferred: CDC/Debezium, multi-tenancy, full secret rotation, OpenTelemetry, hosted deployment, and business-state use of a Kafka DLQ
 
 ## Phase 0 — Repository foundation `[~]`
@@ -33,25 +34,25 @@ Features and tasks:
 
 - [x] Inspect local workspace and GitHub remote without overwriting existing work
 - [x] Initialize `main`, connect `origin`, and create this living plan
-- [ ] Create `feature/phase-0-foundation`
-- [ ] Scaffold Java 21 Spring Boot backend with Maven
-- [ ] Scaffold minimal React + TypeScript frontend
-- [ ] Add Dockerfiles and Docker Compose foundation
-- [ ] Add PostgreSQL and single-node Apache Kafka in local Compose
-- [ ] Add backend/frontend health-oriented starter behavior
-- [ ] Add README, architecture documentation, and Git/GitHub workflow
-- [ ] Add GitHub Actions jobs for backend build/tests and frontend build/tests
-- [ ] Build backend and frontend locally
-- [ ] Start PostgreSQL/Kafka locally and verify health/readiness
-- [ ] Review, update this plan, commit/push, merge to `main`, and verify `main`
+- [x] Create `feature/phase-0-foundation`
+- [x] Scaffold Java 21 Spring Boot backend with Maven
+- [x] Scaffold minimal React + TypeScript frontend
+- [x] Add Dockerfiles and Docker Compose foundation
+- [x] Add PostgreSQL and single-node Apache Kafka in local Compose
+- [x] Add backend/frontend health-oriented starter behavior
+- [x] Add README, architecture documentation, and Git/GitHub workflow
+- [x] Add GitHub Actions jobs for backend build/tests and frontend build/tests
+- [x] Build backend and frontend locally
+- [!] Start PostgreSQL/Kafka locally and verify health/readiness — Docker API unavailable to this Codex session
+- [~] Review, update this plan, commit/push, merge to `main`, and verify `main` — review complete; merge awaits container verification
 
 Acceptance criteria:
 
-- [ ] Backend build succeeds
-- [ ] Frontend build succeeds
+- [x] Backend build succeeds
+- [x] Frontend build succeeds
 - [ ] PostgreSQL and Kafka start locally with Docker Compose and pass health checks
-- [ ] CI definition covers build, unit tests, and an integration-test path
-- [ ] Foundational docs explain setup, architecture direction, workflow, and current status
+- [x] CI definition covers build, unit tests, and an integration-test path
+- [x] Foundational docs explain setup, architecture direction, workflow, and current status
 
 ## Phase 1 — Core domain + PostgreSQL `[ ]`
 
@@ -90,6 +91,8 @@ Features and tasks:
 
 - [ ] Configure topic, producer, consumer group, partitions, keys, acknowledgements, and error handling
 - [ ] Implement atomic delivery claim/check and current-state load
+- [ ] Implement lease/token-based delivery claiming with a claim timeout and stale-claim recovery
+- [ ] Keep external HTTP outside database transactions/row locks and validate the lease token on completion
 - [ ] Implement pooled HTTP delivery with connect/response timeouts and controlled concurrency
 - [ ] Persist `DeliveryAttempt` and success/failure state
 - [ ] Add WireMock/Testcontainers end-to-end tests
@@ -98,6 +101,7 @@ Acceptance criteria:
 
 - [ ] Event submission reaches a WireMock webhook asynchronously through PostgreSQL, outbox, Kafka, and worker
 - [ ] A 2xx response results in `SUCCESS` with a recorded attempt
+- [ ] A crashed worker's expired lease is recovered, and a stale worker cannot overwrite a newer claim
 
 ## Phase 4 — Reliable retry `[ ]`
 
