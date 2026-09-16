@@ -21,10 +21,10 @@ The polling publisher may publish a Kafka record and crash before marking its ou
 
 ## Current status
 
-- Current phase: Phase 1 — Core domain + PostgreSQL is next
-- Overall status: Phase 0 `[x]` completed; Phase 1 `[ ]` planned
-- Completed: repository setup; agent working agreement; backend/frontend scaffolds and builds; unit/HTTP integration tests; healthy local Compose stack with PostgreSQL, Kafka, backend, and frontend; CI; foundational documentation; manager review
-- Next: merge the verified Phase 0 feature branch into `main`, verify `main` and its CI run, then create the Phase 1 feature branch and scope the first core-domain increment
+- Current phase: Phase 1 — Core domain + PostgreSQL
+- Overall status: Phase 0 `[x]` completed and merged; Phase 1 `[~]` in progress
+- Completed: Phase 0 merged to `main` with green CI; repository setup; agent working agreement; backend/frontend scaffolds and builds; unit/HTTP integration tests; healthy local Compose stack with PostgreSQL, Kafka, backend, and frontend; CI; foundational documentation; manager review
+- Next: implement and verify the Phase 1 PostgreSQL persistence foundation: dependencies, Flyway V1 schema, core entities/repositories, and a real PostgreSQL integration test
 - Environment note: local port `5432` was already occupied during final verification, so the full stack was successfully verified with the documented host-port overrides (`55432/59092/18080/13000`). This does not change container ports or application topology.
 - Intentionally deferred: CDC/Debezium, multi-tenancy, full secret rotation, OpenTelemetry, hosted deployment, and business-state use of a Kafka DLQ
 
@@ -56,11 +56,12 @@ Acceptance criteria:
 - [x] CI definition covers build, unit tests, and an integration-test path
 - [x] Foundational docs explain setup, architecture direction, workflow, and current status
 
-## Phase 1 — Core domain + PostgreSQL `[ ]`
+## Phase 1 — Core domain + PostgreSQL `[~]`
 
 Features and tasks:
 
-- [ ] Implement `WebhookEndpoint`, `Event`, `Delivery`, and `DeliveryAttempt`
+- [~] Add Spring Data JPA, PostgreSQL, Flyway, and PostgreSQL Testcontainers foundations
+- [ ] Implement `WebhookEndpoint`, `Event`, `Delivery`, and `DeliveryAttempt` persistence models and repositories
 - [ ] Add Flyway migrations, foreign keys, constraints, unique constraints, and query-driven indexes
 - [ ] Add endpoint create/list and event submission REST APIs
 - [ ] Add minimal endpoint create/list and event submit UI
