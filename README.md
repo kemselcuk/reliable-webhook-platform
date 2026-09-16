@@ -13,7 +13,7 @@ Phase 1 currently provides the repository foundation and core PostgreSQL persist
 - a Flyway-managed PostgreSQL schema for webhook endpoints, events, deliveries, and delivery attempts;
 - Spring Data JPA repositories with JSONB event payload mapping and database constraints.
 
-The REST endpoint/event APIs, transactional outbox, Kafka publisher/worker, retries, signing, and metrics are intentionally deferred to later phases. The health endpoint and persistence foundation are not a delivery guarantee.
+The transactional outbox, Kafka publisher/worker, retries, signing, and metrics are intentionally deferred to later phases. The current REST increment supports endpoint registration/listing and explicit event fan-out to selected enabled endpoints; it is not yet an asynchronous delivery guarantee.
 
 ## Repository layout
 
@@ -70,6 +70,27 @@ npm run dev
 
 Vite serves the UI at `http://localhost:5173` and proxies `/api` to the backend at port 8080.
 
+### Phase 1 REST API
+
+Create and list webhook endpoints:
+
+```bash
+curl -i -X POST http://localhost:8080/api/webhook-endpoints \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"Orders","url":"http://localhost:8081/webhooks"}'
+curl 'http://localhost:8080/api/webhook-endpoints?page=0&size=20'
+```
+
+Submit an event to explicitly selected, enabled endpoint IDs returned by the endpoint API:
+
+```bash
+curl -i -X POST http://localhost:8080/api/events \
+  -H 'Content-Type: application/json' \
+  -d '{"type":"order.created","payload":{"orderId":"order-123"},"endpointIds":["<endpoint-uuid>"]}'
+```
+
+Endpoint creation returns `201 Created` with a `Location` header. Event creation stores one `PENDING` delivery per selected endpoint in the same PostgreSQL transaction. Invalid requests and endpoint lookup/state failures use RFC 9457 `application/problem+json` responses with a stable `code` property. Request IDs, idempotency keys, authentication, and asynchronous publication are later-phase concerns.
+
 ### Full local Compose stack
 
 ```bash
@@ -114,4 +135,4 @@ Use a focused `feature/`, `fix/`, `refactor/`, or `docs/` branch for meaningful 
 
 ## Current limitations
 
-There are no endpoint/event CRUD APIs, Kafka producers/consumers, retries, HMAC signatures, authentication, dashboards, or hosted deployment yet. Persistence is currently limited to the core schema and repositories; endpoint/event HTTP workflows are planned for the remainder of Phase 1.
+There are no Kafka producers/consumers, transactional outbox, retries, HMAC signatures, authentication, dashboards, or hosted deployment yet. Endpoint/event APIs currently cover creation, listing, explicit event targeting, and durable `PENDING` deliveries; delivery publication and worker processing are planned for later phases.

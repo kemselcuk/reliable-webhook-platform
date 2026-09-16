@@ -23,8 +23,8 @@ The polling publisher may publish a Kafka record and crash before marking its ou
 
 - Current phase: Phase 1 — Core domain + PostgreSQL
 - Overall status: Phase 0 `[x]` completed and merged; Phase 1 `[~]` in progress
-- Completed: Phase 0 merged to `main` with green CI; Phase 1 PostgreSQL/Flyway foundation; core persistence models and repositories; real PostgreSQL schema/constraint integration coverage
-- Next: complete endpoint create/list and event submission REST contracts and service transactions; event submission creates one delivery for each explicitly selected endpoint
+- Completed: Phase 0 merged to `main` with green CI; Phase 1 PostgreSQL/Flyway foundation; core persistence models and repositories; endpoint create/list and transactional event submission APIs; real PostgreSQL schema/constraint/API integration coverage
+- Next: add the minimal React endpoint create/list and event submission flows, then run the full Phase 1 acceptance review
 - Environment note: local port `5432` was already occupied during final verification, so the full stack was successfully verified with the documented host-port overrides (`55432/59092/18080/13000`). This does not change container ports or application topology.
 - Intentionally deferred: CDC/Debezium, multi-tenancy, full secret rotation, OpenTelemetry, hosted deployment, and business-state use of a Kafka DLQ
 
@@ -63,15 +63,15 @@ Features and tasks:
 - [x] Add Spring Data JPA, PostgreSQL, Flyway, and PostgreSQL Testcontainers foundations
 - [x] Implement `WebhookEndpoint`, `Event`, `Delivery`, and `DeliveryAttempt` persistence models and repositories
 - [x] Add Flyway migrations, foreign keys, constraints, unique constraints, and query-driven indexes
-- [~] Add endpoint create/list and event submission REST APIs
+- [x] Add endpoint create/list and event submission REST APIs
 - [ ] Add minimal endpoint create/list and event submit UI
 - [x] Add PostgreSQL integration tests
 
 Acceptance criteria:
 
-- [ ] Endpoints and events can be created through documented APIs
-- [ ] Schema is created exclusively through versioned migrations
-- [ ] Core persistence/API integration tests pass against PostgreSQL
+- [x] Endpoints and events can be created through documented APIs
+- [x] Schema is created exclusively through versioned migrations
+- [x] Core persistence/API integration tests pass against PostgreSQL
 
 ## Phase 2 — Transactional outbox `[ ]`
 

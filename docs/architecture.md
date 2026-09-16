@@ -4,7 +4,7 @@
 
 The platform is designed as a small, fully local webhook delivery system. PostgreSQL will be the authoritative store for business state; Kafka will provide asynchronous transport, buffering, and horizontal consumption. A React UI will exercise the real HTTP API and show operational state without becoming a second source of truth.
 
-Phase 1 now includes the PostgreSQL persistence foundation: a Flyway-managed core schema, JPA mappings, repositories, and real PostgreSQL integration coverage. Endpoint/event REST workflows are not implemented yet. Kafka clients, the outbox, delivery workers, authentication, retries, and signing remain later-phase behavior; the target-flow sections below describe that approved direction rather than current guarantees.
+Phase 1 now includes the PostgreSQL persistence foundation and REST/service increment: a Flyway-managed core schema, JPA mappings, repositories, endpoint registration/listing, and explicit event targeting to enabled endpoints. Kafka clients, the outbox, delivery workers, authentication, retries, and signing remain later-phase behavior; the target-flow sections below describe that approved direction rather than current guarantees.
 
 ## Current domain persistence
 
@@ -14,6 +14,8 @@ The V1 migration creates four core tables:
 - `events` stores the event type, JSONB payload, and creation time;
 - `deliveries` links one event to one endpoint, with a unique event/endpoint pair and initial durable status fields;
 - `delivery_attempts` records numbered outcomes and enforces one row per delivery/attempt number.
+
+The REST layer returns DTOs and an app-owned page shape. Endpoint URLs are normalized local URI values after validating absolute `http`/`https` scheme, host presence, and the absence of fragments/user-info. Event submission requires a non-empty, unique list of endpoint IDs and creates one `PENDING` delivery per selected enabled endpoint in one transaction. No broadcast or subscription behavior is implied.
 
 Foreign keys and check constraints protect relationships, enum-compatible status values, attempt counts, HTTP status bounds, and attempt timestamp order. Hibernate validates this schema but does not create or update it. Endpoint secrets are intentionally absent from V1; their storage and signing lifecycle remain a Phase 6 security decision.
 
@@ -38,7 +40,7 @@ Polling publisher -> Kafka delivery command -> worker
                      attempt + state transition in PostgreSQL
 ```
 
-Creating an event will persist the event, its delivery records, and publish intent in one database transaction. A polling publisher will move compact, versioned delivery references to Kafka. Workers will load current state from PostgreSQL, claim eligible work safely, perform bounded-concurrency HTTP delivery, and persist attempts and state transitions.
+Creating an event currently persists the event and its delivery records in one database transaction. Phase 2 will add publish intent in that same transaction. A polling publisher will then move compact, versioned delivery references to Kafka. Workers will load current state from PostgreSQL, claim eligible work safely, perform bounded-concurrency HTTP delivery, and persist attempts and state transitions.
 
 ## Durability and delivery semantics
 
@@ -82,4 +84,4 @@ The backend and frontend health checks use readiness/HTTP endpoints. Compose dep
 
 ## Phase boundaries
 
-Phase 1 introduces domain records, versioned migrations, and basic APIs. Phase 2 adds the transactional outbox and publisher. Phase 3 adds Kafka commands, lease-based workers, and external delivery. Phases 4–7 add retries, idempotency/concurrency hardening, HMAC security, and observability. Phase 8 completes the UI and Phase 9 hardens the end-to-end demo.
+Phase 1 introduces domain records, versioned migrations, and basic endpoint/event APIs. Phase 2 adds the transactional outbox and publisher. Phase 3 adds Kafka commands, lease-based workers, and external delivery. Phases 4–7 add retries, idempotency/concurrency hardening, HMAC security, and observability. Phase 8 completes the UI and Phase 9 hardens the end-to-end demo.
