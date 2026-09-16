@@ -24,7 +24,7 @@ The polling publisher may publish a Kafka record and crash before marking its ou
 - Current phase: Phase 1 — Core domain + PostgreSQL completed; awaiting user direction
 - Overall status: Phase 0 `[x]` completed and merged; Phase 1 `[x]` completed
 - Completed: Phase 1 PostgreSQL/Flyway schema; core persistence models/repositories; endpoint create/list and transactional event submission APIs; RFC 9457 errors; real PostgreSQL schema/constraint/API tests; minimal React endpoint/event workflow; clean-volume Compose and browser verification
-- Next: finish the Phase 1 feature push/merge and green `main` CI verification, report the phase with local inspection instructions, then stop until the user requests Phase 2
+- Next: report the completed Phase 1 with local inspection instructions and wait for explicit user direction before starting Phase 2
 - Environment note: local port `5432` was already occupied during final verification, so the full stack was successfully verified with the documented host-port overrides (`55432/59092/18080/13000`). This does not change container ports or application topology.
 - Intentionally deferred: CDC/Debezium, multi-tenancy, full secret rotation, OpenTelemetry, hosted deployment, and business-state use of a Kafka DLQ
 
