@@ -23,8 +23,8 @@ The polling publisher may publish a Kafka record and crash before marking its ou
 
 - Current phase: Phase 1 — Core domain + PostgreSQL
 - Overall status: Phase 0 `[x]` completed and merged; Phase 1 `[~]` in progress
-- Completed: Phase 0 merged to `main` with green CI; repository setup; agent working agreement; backend/frontend scaffolds and builds; unit/HTTP integration tests; healthy local Compose stack with PostgreSQL, Kafka, backend, and frontend; CI; foundational documentation; manager review
-- Next: implement and verify the Phase 1 PostgreSQL persistence foundation: dependencies, Flyway V1 schema, core entities/repositories, and a real PostgreSQL integration test
+- Completed: Phase 0 merged to `main` with green CI; Phase 1 PostgreSQL/Flyway foundation; core persistence models and repositories; real PostgreSQL schema/constraint integration coverage
+- Next: implement endpoint create/list and event submission REST contracts and service transactions; event submission will create one delivery for each explicitly selected endpoint
 - Environment note: local port `5432` was already occupied during final verification, so the full stack was successfully verified with the documented host-port overrides (`55432/59092/18080/13000`). This does not change container ports or application topology.
 - Intentionally deferred: CDC/Debezium, multi-tenancy, full secret rotation, OpenTelemetry, hosted deployment, and business-state use of a Kafka DLQ
 
@@ -60,12 +60,12 @@ Acceptance criteria:
 
 Features and tasks:
 
-- [~] Add Spring Data JPA, PostgreSQL, Flyway, and PostgreSQL Testcontainers foundations
-- [ ] Implement `WebhookEndpoint`, `Event`, `Delivery`, and `DeliveryAttempt` persistence models and repositories
-- [ ] Add Flyway migrations, foreign keys, constraints, unique constraints, and query-driven indexes
+- [x] Add Spring Data JPA, PostgreSQL, Flyway, and PostgreSQL Testcontainers foundations
+- [x] Implement `WebhookEndpoint`, `Event`, `Delivery`, and `DeliveryAttempt` persistence models and repositories
+- [x] Add Flyway migrations, foreign keys, constraints, unique constraints, and query-driven indexes
 - [ ] Add endpoint create/list and event submission REST APIs
 - [ ] Add minimal endpoint create/list and event submit UI
-- [ ] Add PostgreSQL integration tests
+- [x] Add PostgreSQL integration tests
 
 Acceptance criteria:
 

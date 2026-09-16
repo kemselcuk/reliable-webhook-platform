@@ -4,7 +4,18 @@
 
 The platform is designed as a small, fully local webhook delivery system. PostgreSQL will be the authoritative store for business state; Kafka will provide asynchronous transport, buffering, and horizontal consumption. A React UI will exercise the real HTTP API and show operational state without becoming a second source of truth.
 
-Phase 0 deliberately stops at a health-oriented application shell. It has no datasource, migrations, Kafka client, delivery worker, authentication, or business endpoint yet. The sections below describe the approved direction for later phases, not implemented behavior.
+Phase 1 now includes the PostgreSQL persistence foundation: a Flyway-managed core schema, JPA mappings, repositories, and real PostgreSQL integration coverage. Endpoint/event REST workflows are not implemented yet. Kafka clients, the outbox, delivery workers, authentication, retries, and signing remain later-phase behavior; the target-flow sections below describe that approved direction rather than current guarantees.
+
+## Current domain persistence
+
+The V1 migration creates four core tables:
+
+- `webhook_endpoints` stores a unique operator-facing name, destination URL, enabled state, and audit timestamps;
+- `events` stores the event type, JSONB payload, and creation time;
+- `deliveries` links one event to one endpoint, with a unique event/endpoint pair and initial durable status fields;
+- `delivery_attempts` records numbered outcomes and enforces one row per delivery/attempt number.
+
+Foreign keys and check constraints protect relationships, enum-compatible status values, attempt counts, HTTP status bounds, and attempt timestamp order. Hibernate validates this schema but does not create or update it. Endpoint secrets are intentionally absent from V1; their storage and signing lifecycle remain a Phase 6 security decision.
 
 ## Target event flow
 
@@ -67,7 +78,7 @@ Compose defines four services for the local topology:
 - the Spring Boot backend, built as a non-root Java runtime image;
 - the React build served by an unprivileged nginx image, proxying `/api` to the backend.
 
-The backend and frontend health checks use readiness/HTTP endpoints. Compose dependencies wait for infrastructure and backend health, but Phase 0 does not yet connect application code to PostgreSQL or Kafka.
+The backend and frontend health checks use readiness/HTTP endpoints. Compose dependencies wait for infrastructure and backend health. The Phase 1 backend connects to PostgreSQL, runs Flyway, and includes database health in readiness; it still has no Kafka client.
 
 ## Phase boundaries
 
