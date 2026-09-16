@@ -2,16 +2,19 @@
 
 Reliable Webhook Platform is a local-first Spring Boot and React workspace for exploring durable, asynchronous webhook delivery. The long-term design uses PostgreSQL as the source of truth and Apache Kafka as the transport between durable work state and delivery workers.
 
-Phase 0 currently provides the repository foundation only:
+Phase 1 currently provides the repository foundation and core PostgreSQL persistence:
 
 - a Java 21 / Spring Boot 3.5.16 backend;
 - a small React + TypeScript + Vite frontend;
 - a backend system-health API at `GET /api/system/health`;
 - a frontend health card with loading, healthy, and error states;
 - PostgreSQL 17 and single-node Apache Kafka 4.3.1 Compose services;
-- Dockerfiles, readiness health checks, and GitHub Actions checks.
+- Dockerfiles, readiness health checks, and GitHub Actions checks;
+- a Flyway-managed PostgreSQL schema for webhook endpoints, events, deliveries, and delivery attempts;
+- Spring Data JPA repositories with JSONB event payload mapping and database constraints;
+- a minimal browser workflow for endpoint registration/listing and event submission to selected endpoints.
 
-The delivery domain, database schema, transactional outbox, Kafka publisher/worker, retries, signing, and metrics are intentionally deferred to later phases. The Phase 0 health endpoint is not a delivery guarantee.
+The transactional outbox, Kafka publisher/worker, retries, signing, and metrics are intentionally deferred to later phases. The current REST increment supports endpoint registration/listing and explicit event fan-out to selected enabled endpoints; it is not yet an asynchronous delivery guarantee.
 
 ## Repository layout
 
@@ -41,6 +44,8 @@ cd backend
 ./mvnw spring-boot:run
 ```
 
+The backend expects PostgreSQL at `localhost:5432` using the local defaults (`webhook` / `webhook` / `webhook-local-only`). Start the Compose PostgreSQL service first, or override `SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME`, and `SPRING_DATASOURCE_PASSWORD` for another local database. Flyway applies versioned migrations on startup and Hibernate validates the mapped schema; Hibernate does not create or update tables.
+
 The backend listens on `http://localhost:8080`. Check it with:
 
 ```bash
@@ -48,9 +53,9 @@ curl http://localhost:8080/api/system/health
 curl http://localhost:8080/actuator/health/readiness
 ```
 
-Compose exposes Kafka on two listener addresses for the later Kafka-enabled phases: containers use `kafka:29092` (the `INTERNAL` listener), while host tools use `localhost:${KAFKA_PORT:-9092}` (the `EXTERNAL` listener). Phase 0 starts Kafka as infrastructure but the backend does not yet create a Kafka client or connect to it.
+Compose exposes Kafka on two listener addresses for the later Kafka-enabled phases: containers use `kafka:29092` (the `INTERNAL` listener), while host tools use `localhost:${KAFKA_PORT:-9092}` (the `EXTERNAL` listener). Phase 1 starts Kafka as infrastructure but the backend does not yet create a Kafka client or connect to it. The backend connects to the Compose PostgreSQL service using the same database credentials through `SPRING_DATASOURCE_*` environment variables.
 
-The Maven build separates `*Test` unit tests (Surefire) from `*IT` HTTP integration tests (Failsafe). The current integration test starts Spring Boot on a random port and does not require Docker or PostgreSQL.
+The Maven build separates `*Test` unit tests (Surefire) from `*IT` integration tests (Failsafe). The health HTTP slice does not require Docker or PostgreSQL. `CorePersistenceIT` uses a disposable PostgreSQL Testcontainer and verifies migrations, JSONB persistence, relationships, and database constraints. Run it with Docker available using `./mvnw -B -DskipUnitTests=true -Dit.test=CorePersistenceIT verify`.
 
 ### Frontend development server
 
@@ -66,6 +71,27 @@ npm run dev
 
 Vite serves the UI at `http://localhost:5173` and proxies `/api` to the backend at port 8080.
 
+### Phase 1 REST API
+
+Create and list webhook endpoints:
+
+```bash
+curl -i -X POST http://localhost:8080/api/webhook-endpoints \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"Orders","url":"http://localhost:8081/webhooks"}'
+curl 'http://localhost:8080/api/webhook-endpoints?page=0&size=20'
+```
+
+Submit an event to explicitly selected, enabled endpoint IDs returned by the endpoint API:
+
+```bash
+curl -i -X POST http://localhost:8080/api/events \
+  -H 'Content-Type: application/json' \
+  -d '{"type":"order.created","payload":{"orderId":"order-123"},"endpointIds":["<endpoint-uuid>"]}'
+```
+
+Endpoint creation returns `201 Created` with a `Location` header. Event creation stores one `PENDING` delivery per selected endpoint in the same PostgreSQL transaction. Invalid requests and endpoint lookup/state failures use RFC 9457 `application/problem+json` responses with a stable `code` property. Request IDs, idempotency keys, authentication, and asynchronous publication are later-phase concerns.
+
 ### Full local Compose stack
 
 ```bash
@@ -73,7 +99,7 @@ docker compose up --build -d
 docker compose ps
 ```
 
-Open `http://localhost:3000`. Compose starts PostgreSQL and Kafka first, waits for their health checks, then starts the backend and waits for backend readiness before starting the frontend. Stop the stack with:
+Open `http://localhost:3000`. From the UI, create an endpoint, select it in the event form, and submit the sample JSON payload. Phase 1 stores the event and its `PENDING` delivery record; actual webhook publication starts in later phases. Compose starts PostgreSQL and Kafka first, waits for their health checks, then starts the backend and waits for backend readiness before starting the frontend. Stop the stack with:
 
 ```bash
 docker compose down
@@ -110,4 +136,4 @@ Use a focused `feature/`, `fix/`, `refactor/`, or `docs/` branch for meaningful 
 
 ## Current limitations
 
-There are no endpoint/event CRUD APIs, persistence migrations, Kafka producers/consumers, retries, delivery attempts, HMAC signatures, authentication, dashboards, or hosted deployment in Phase 0. These are planned features, not claims about the current build.
+There are no Kafka producers/consumers, transactional outbox, retries, HMAC signatures, authentication, dashboards, or hosted deployment yet. Endpoint/event APIs currently cover creation, listing, explicit event targeting, and durable `PENDING` deliveries; delivery publication and worker processing are planned for later phases.

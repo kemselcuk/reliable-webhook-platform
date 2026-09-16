@@ -54,6 +54,9 @@ services:
       dockerfile: Dockerfile
     environment:
       SERVER_PORT: 8080
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-webhook}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-webhook}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-webhook-local-only}
     depends_on:
       postgres:
         condition: service_healthy

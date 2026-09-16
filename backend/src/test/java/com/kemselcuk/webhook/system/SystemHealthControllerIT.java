@@ -1,36 +1,27 @@
 package com.kemselcuk.webhook.system;
 
-import com.kemselcuk.webhook.WebhookPlatformApplication;
 import org.junit.jupiter.api.Test;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.web.client.TestRestTemplate;
-import org.springframework.boot.test.web.server.LocalServerPort;
-import org.springframework.http.ResponseEntity;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.context.annotation.Import;
+import org.springframework.test.web.servlet.MockMvc;
 
-import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-@SpringBootTest(
-        classes = WebhookPlatformApplication.class,
-        webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT
-)
+@WebMvcTest(SystemHealthController.class)
+@Import(SystemHealthService.class)
 class SystemHealthControllerIT {
 
-    @LocalServerPort
-    private int port;
-
-    private final TestRestTemplate restTemplate = new TestRestTemplate();
+    @Autowired
+    private MockMvc mockMvc;
 
     @Test
-    void exposesHealthOverHttp() {
-        ResponseEntity<SystemHealthResponse> response = restTemplate.getForEntity(
-                "http://localhost:{port}/api/system/health",
-                SystemHealthResponse.class,
-                port
-        );
-
-        assertThat(response.getStatusCode().is2xxSuccessful()).isTrue();
-        assertThat(response.getBody()).isEqualTo(
-                new SystemHealthResponse("UP", "reliable-webhook-platform")
-        );
+    void exposesHealthOverHttp() throws Exception {
+        mockMvc.perform(get("/api/system/health"))
+                .andExpect(status().isOk())
+                .andExpect(content().json(
+                        "{\"status\":\"UP\",\"service\":\"reliable-webhook-platform\"}"));
     }
 }

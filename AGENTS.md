@@ -107,6 +107,17 @@ Update `docs/PLAN.md` whenever work changes the repository's real state:
 
 At handoff, report the active branch, last relevant commit, checks run, unresolved blocker or next unchecked plan item, and whether changes are pushed.
 
+## Phase boundary handoff
+
+When a phase is complete, stop before starting the next phase. The manager must first:
+
+1. finish review, verification, plan/docs updates, feature push, merge to `main`, and green `main` CI verification;
+2. give the user a concise phase report covering implemented behavior, important decisions, tests/acceptance evidence, branch/commit state, and known deferrals;
+3. provide exact instructions for seeing and exercising the result locally (browser URLs, representative API commands, and relevant GitHub/CI locations);
+4. wait for the user's direction before creating or implementing the next phase.
+
+Do not treat an internally completed coding increment as a completed phase; the stop occurs only after every planned phase task and acceptance criterion has been reviewed and the stable `main` result has been verified.
+
 ## Current recovery point
 
-At creation of this file, work is on `feature/phase-0-foundation`. The backend/frontend foundation, CI definition, documentation, and Compose definition have been committed and pushed. Phase 0 remains open only because PostgreSQL/Kafka/full-stack startup and health checks have not yet succeeded against a responsive Docker daemon. Re-read `docs/PLAN.md` and Git history for any newer state before relying on this snapshot.
+At the latest update, Phases 0 and 1 are complete. Phase 1 provides the PostgreSQL/Flyway core model, endpoint/event REST APIs, and minimal React endpoint/event workflow. Do not begin Phase 2 until the Phase 1 branch/CI state has been checked and the user explicitly asks to continue after the phase-boundary report. Re-read `docs/PLAN.md` and Git history for the exact current branch and merge state.

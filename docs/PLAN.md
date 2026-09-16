@@ -21,10 +21,10 @@ The polling publisher may publish a Kafka record and crash before marking its ou
 
 ## Current status
 
-- Current phase: Phase 1 — Core domain + PostgreSQL is next
-- Overall status: Phase 0 `[x]` completed; Phase 1 `[ ]` planned
-- Completed: repository setup; agent working agreement; backend/frontend scaffolds and builds; unit/HTTP integration tests; healthy local Compose stack with PostgreSQL, Kafka, backend, and frontend; CI; foundational documentation; manager review
-- Next: merge the verified Phase 0 feature branch into `main`, verify `main` and its CI run, then create the Phase 1 feature branch and scope the first core-domain increment
+- Current phase: Phase 1 — Core domain + PostgreSQL completed; awaiting user direction
+- Overall status: Phase 0 `[x]` completed and merged; Phase 1 `[x]` completed
+- Completed: Phase 1 PostgreSQL/Flyway schema; core persistence models/repositories; endpoint create/list and transactional event submission APIs; RFC 9457 errors; real PostgreSQL schema/constraint/API tests; minimal React endpoint/event workflow; clean-volume Compose and browser verification
+- Next: finish the Phase 1 feature push/merge and green `main` CI verification, report the phase with local inspection instructions, then stop until the user requests Phase 2
 - Environment note: local port `5432` was already occupied during final verification, so the full stack was successfully verified with the documented host-port overrides (`55432/59092/18080/13000`). This does not change container ports or application topology.
 - Intentionally deferred: CDC/Debezium, multi-tenancy, full secret rotation, OpenTelemetry, hosted deployment, and business-state use of a Kafka DLQ
 
@@ -56,21 +56,22 @@ Acceptance criteria:
 - [x] CI definition covers build, unit tests, and an integration-test path
 - [x] Foundational docs explain setup, architecture direction, workflow, and current status
 
-## Phase 1 — Core domain + PostgreSQL `[ ]`
+## Phase 1 — Core domain + PostgreSQL `[x]`
 
 Features and tasks:
 
-- [ ] Implement `WebhookEndpoint`, `Event`, `Delivery`, and `DeliveryAttempt`
-- [ ] Add Flyway migrations, foreign keys, constraints, unique constraints, and query-driven indexes
-- [ ] Add endpoint create/list and event submission REST APIs
-- [ ] Add minimal endpoint create/list and event submit UI
-- [ ] Add PostgreSQL integration tests
+- [x] Add Spring Data JPA, PostgreSQL, Flyway, and PostgreSQL Testcontainers foundations
+- [x] Implement `WebhookEndpoint`, `Event`, `Delivery`, and `DeliveryAttempt` persistence models and repositories
+- [x] Add Flyway migrations, foreign keys, constraints, unique constraints, and query-driven indexes
+- [x] Add endpoint create/list and event submission REST APIs
+- [x] Add minimal endpoint create/list and event submit UI
+- [x] Add PostgreSQL integration tests
 
 Acceptance criteria:
 
-- [ ] Endpoints and events can be created through documented APIs
-- [ ] Schema is created exclusively through versioned migrations
-- [ ] Core persistence/API integration tests pass against PostgreSQL
+- [x] Endpoints and events can be created through documented APIs
+- [x] Schema is created exclusively through versioned migrations
+- [x] Core persistence/API integration tests pass against PostgreSQL
 
 ## Phase 2 — Transactional outbox `[ ]`
 
@@ -219,3 +220,4 @@ Record future material changes as: `Planned`, `Implemented`, `Reason`, and `Trad
 - The active root session cannot change its own model at runtime. It remains the manager/reviewer at the current environment-provided model and reasoning level; this is the closest available behavior to the requested Sol/high manager without silently substituting a spawned third role.
 - Local tools detected at initialization: Java 21 is installed (Maven itself currently launches on Java 25), Maven 3.9.11, Node.js 22.23.2, npm 10.9.8, Docker 28.3.2, and Docker Compose 2.38.2.
 - Phase 0 final verification used host-port overrides because local port `5432` was occupied. PostgreSQL, Kafka, backend, and frontend all reported healthy; direct backend health/readiness, frontend HTTP, and frontend-to-backend proxy requests returned HTTP 200. The frontend healthcheck was corrected to use `127.0.0.1` because the image resolved `localhost` to IPv6 while nginx listened on IPv4.
+- Phase 1 final verification used a separate Compose project and fresh named volumes to prove clean Flyway startup without deleting existing local data. The default project volume in this workspace contains an earlier, unpublished V1 migration draft from implementation and therefore correctly fails Flyway checksum validation until that development-only volume is intentionally recreated.
