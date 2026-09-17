@@ -47,6 +47,12 @@ public class Delivery {
     @Column(name = "next_retry_at")
     private Instant nextRetryAt;
 
+    @Column(name = "claim_token")
+    private UUID claimToken;
+
+    @Column(name = "claimed_at")
+    private Instant claimedAt;
+
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
@@ -93,6 +99,14 @@ public class Delivery {
 
     public Instant getNextRetryAt() {
         return nextRetryAt;
+    }
+
+    public UUID getClaimToken() {
+        return claimToken;
+    }
+
+    public Instant getClaimedAt() {
+        return claimedAt;
     }
 
     public Instant getCreatedAt() {

@@ -120,4 +120,4 @@ Do not treat an internally completed coding increment as a completed phase; the 
 
 ## Current recovery point
 
-At the latest update, Phases 0–2 are complete and Phase 3 has started on `feature/phase-3-delivery-worker` after explicit user direction. The first increment is the append-only delivery lease schema plus atomic claim, stale-lease recovery, and stale-token tests; HTTP and Kafka consumption follow as separate reviewed increments. Re-read `docs/PLAN.md` and Git history for the exact current branch and commit state.
+At the latest update, Phases 0–2 are complete and Phase 3 is active on `feature/phase-3-delivery-worker`. The append-only delivery lease schema, atomic claim/current-state snapshot, stale-lease recovery, token-guarded completion, and PostgreSQL concurrency tests are implemented; the next increment is bounded HTTP delivery outside database transactions, followed by Kafka consumption and end-to-end verification. Re-read `docs/PLAN.md` and Git history for the exact current branch and commit state.
