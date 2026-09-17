@@ -117,8 +117,8 @@ docker compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh \
   --bootstrap-server kafka:29092 \
   --topic webhook.delivery.commands.v1 \
   --from-beginning \
-  --property print.key=true \
-  --property key.separator=' => ' \
+  --formatter-property print.key=true \
+  --formatter-property key.separator=' => ' \
   --timeout-ms 10000
 ```
 

@@ -120,4 +120,4 @@ Do not treat an internally completed coding increment as a completed phase; the 
 
 ## Current recovery point
 
-At the latest update, Phases 0 and 1 are complete and Phase 2 is in progress on `feature/phase-2-transactional-outbox`. The append-only V2 outbox schema/model, transactional creation, and real PostgreSQL rollback tests are complete; the next increment is the lease/token-based batched Kafka polling publisher with outage/recovery coverage. Re-read `docs/PLAN.md` and Git history for the exact current branch and commit state.
+At the latest update, Phases 0–2 are complete. Phase 2 provides atomic outbox persistence, a lease/token-based PostgreSQL polling publisher, and compact keyed Kafka commands with outage/recovery and duplicate-window coverage. Do not begin Phase 3 until the Phase 2 branch/CI/merge state has been checked and the user explicitly asks to continue after the phase-boundary report. Re-read `docs/PLAN.md` and Git history for the exact current branch and merge state.
