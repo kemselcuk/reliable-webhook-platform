@@ -57,6 +57,8 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-webhook}
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-webhook}
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-webhook-local-only}
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      WEBHOOK_OUTBOX_PUBLISHER_ENABLED: "true"
     depends_on:
       postgres:
         condition: service_healthy

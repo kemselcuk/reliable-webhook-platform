@@ -21,10 +21,10 @@ The polling publisher may publish a Kafka record and crash before marking its ou
 
 ## Current status
 
-- Current phase: Phase 1 — Core domain + PostgreSQL completed; awaiting user direction
-- Overall status: Phase 0 `[x]` completed and merged; Phase 1 `[x]` completed
-- Completed: Phase 1 PostgreSQL/Flyway schema; core persistence models/repositories; endpoint create/list and transactional event submission APIs; RFC 9457 errors; real PostgreSQL schema/constraint/API tests; minimal React endpoint/event workflow; clean-volume Compose and browser verification
-- Next: report the completed Phase 1 with local inspection instructions and wait for explicit user direction before starting Phase 2
+- Current phase: Phase 2 — Transactional outbox completed; awaiting user direction
+- Overall status: Phases 0–2 `[x]` completed
+- Completed: atomic `Event + Delivery + OutboxEvent` persistence; lease/token-based batched publisher; compact keyed Kafka contract; real PostgreSQL/Kafka concurrency, outage/recovery, duplicate-window, and clean Compose verification
+- Next: report the completed Phase 2 with local inspection instructions and wait for explicit user direction before starting Phase 3
 - Environment note: local port `5432` was already occupied during final verification, so the full stack was successfully verified with the documented host-port overrides (`55432/59092/18080/13000`). This does not change container ports or application topology.
 - Intentionally deferred: CDC/Debezium, multi-tenancy, full secret rotation, OpenTelemetry, hosted deployment, and business-state use of a Kafka DLQ
 
@@ -73,20 +73,20 @@ Acceptance criteria:
 - [x] Schema is created exclusively through versioned migrations
 - [x] Core persistence/API integration tests pass against PostgreSQL
 
-## Phase 2 — Transactional outbox `[ ]`
+## Phase 2 — Transactional outbox `[x]`
 
 Features and tasks:
 
-- [ ] Persist `Event`, `Delivery`, and `OutboxEvent` in one transaction
-- [ ] Implement a batched polling publisher with safe concurrent claiming
-- [ ] Define compact, versioned Kafka delivery command contract
-- [ ] Preserve pending outbox state across Kafka outages
+- [x] Persist `Event`, `Delivery`, and `OutboxEvent` in one transaction
+- [x] Implement a batched polling publisher with safe concurrent claiming
+- [x] Define compact, versioned Kafka delivery command contract
+- [x] Preserve pending outbox state across Kafka outages
 
 Acceptance criteria:
 
-- [ ] Business state and publish intent are atomic
-- [ ] Kafka unavailability never loses the outbox record
-- [ ] Publishing resumes after Kafka recovery; duplicate-publication behavior is tested and documented
+- [x] Business state and publish intent are atomic
+- [x] Kafka unavailability never loses the outbox record
+- [x] Publishing resumes after Kafka recovery; duplicate-publication behavior is tested and documented
 
 ## Phase 3 — Kafka + delivery worker `[ ]`
 
@@ -221,3 +221,4 @@ Record future material changes as: `Planned`, `Implemented`, `Reason`, and `Trad
 - Local tools detected at initialization: Java 21 is installed (Maven itself currently launches on Java 25), Maven 3.9.11, Node.js 22.23.2, npm 10.9.8, Docker 28.3.2, and Docker Compose 2.38.2.
 - Phase 0 final verification used host-port overrides because local port `5432` was occupied. PostgreSQL, Kafka, backend, and frontend all reported healthy; direct backend health/readiness, frontend HTTP, and frontend-to-backend proxy requests returned HTTP 200. The frontend healthcheck was corrected to use `127.0.0.1` because the image resolved `localhost` to IPv6 while nginx listened on IPv4.
 - Phase 1 final verification used a separate Compose project and fresh named volumes to prove clean Flyway startup without deleting existing local data. The default project volume in this workspace contains an earlier, unpublished V1 migration draft from implementation and therefore correctly fails Flyway checksum validation until that development-only volume is intentionally recreated.
+- Phase 2 final verification used the separate `rwp-phase2-verify` Compose project with fresh volumes and host ports `56432/59095/18083/13003`. Normal publication and a live Kafka stop/start were exercised: the outage row remained durable as `PENDING/TIMEOUT`, recovered to `PUBLISHED`, and duplicate Kafka commands were observed as permitted by the documented at-least-once boundary.

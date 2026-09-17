@@ -25,7 +25,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @Testcontainers
-@SpringBootTest(classes = WebhookPlatformApplication.class)
+@SpringBootTest(
+        classes = WebhookPlatformApplication.class,
+        properties = "webhook.outbox.publisher.enabled=false"
+)
 class CorePersistenceIT {
 
     @Container
@@ -70,8 +73,8 @@ class CorePersistenceIT {
                 SELECT COUNT(*)
                 FROM information_schema.tables
                 WHERE table_schema = 'public'
-                  AND table_name IN ('webhook_endpoints', 'events', 'deliveries', 'delivery_attempts')
-                """, Integer.class)).isEqualTo(4);
+                  AND table_name IN ('webhook_endpoints', 'events', 'deliveries', 'delivery_attempts', 'outbox_events')
+                """, Integer.class)).isEqualTo(5);
 
         JsonNode payload = objectMapper.readTree("""
                 {"orderId":"order-123","total":42.50,"items":[{"sku":"sku-1","quantity":2}]}

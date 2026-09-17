@@ -120,4 +120,4 @@ Do not treat an internally completed coding increment as a completed phase; the 
 
 ## Current recovery point
 
-At the latest update, Phases 0 and 1 are complete. Phase 1 provides the PostgreSQL/Flyway core model, endpoint/event REST APIs, and minimal React endpoint/event workflow. Do not begin Phase 2 until the Phase 1 branch/CI state has been checked and the user explicitly asks to continue after the phase-boundary report. Re-read `docs/PLAN.md` and Git history for the exact current branch and merge state.
+At the latest update, Phases 0–2 are complete. Phase 2 provides atomic outbox persistence, a lease/token-based PostgreSQL polling publisher, and compact keyed Kafka commands with outage/recovery and duplicate-window coverage. Do not begin Phase 3 until the Phase 2 branch/CI/merge state has been checked and the user explicitly asks to continue after the phase-boundary report. Re-read `docs/PLAN.md` and Git history for the exact current branch and merge state.
