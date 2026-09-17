@@ -21,10 +21,10 @@ The polling publisher may publish a Kafka record and crash before marking its ou
 
 ## Current status
 
-- Current phase: Phase 2 — Transactional outbox completed; awaiting user direction
-- Overall status: Phases 0–2 `[x]` completed
+- Current phase: Phase 3 — Kafka + delivery worker `[~]` in progress
+- Overall status: Phases 0–2 `[x]` completed and merged; Phase 3 `[~]` started on `feature/phase-3-delivery-worker`
 - Completed: atomic `Event + Delivery + OutboxEvent` persistence; lease/token-based batched publisher; compact keyed Kafka contract; real PostgreSQL/Kafka concurrency, outage/recovery, duplicate-window, and clean Compose verification
-- Next: report the completed Phase 2 with local inspection instructions and wait for explicit user direction before starting Phase 3
+- Next: add the append-only delivery lease schema and prove atomic claim, stale-lease recovery, and stale-token protection before introducing external HTTP
 - Environment note: local port `5432` was already occupied during final verification, so the full stack was successfully verified with the documented host-port overrides (`55432/59092/18080/13000`). This does not change container ports or application topology.
 - Intentionally deferred: CDC/Debezium, multi-tenancy, full secret rotation, OpenTelemetry, hosted deployment, and business-state use of a Kafka DLQ
 
@@ -88,13 +88,13 @@ Acceptance criteria:
 - [x] Kafka unavailability never loses the outbox record
 - [x] Publishing resumes after Kafka recovery; duplicate-publication behavior is tested and documented
 
-## Phase 3 — Kafka + delivery worker `[ ]`
+## Phase 3 — Kafka + delivery worker `[~]`
 
 Features and tasks:
 
 - [ ] Configure topic, producer, consumer group, partitions, keys, acknowledgements, and error handling
-- [ ] Implement atomic delivery claim/check and current-state load
-- [ ] Implement lease/token-based delivery claiming with a claim timeout and stale-claim recovery
+- [~] Implement atomic delivery claim/check and current-state load
+- [~] Implement lease/token-based delivery claiming with a claim timeout and stale-claim recovery
 - [ ] Keep external HTTP outside database transactions/row locks and validate the lease token on completion
 - [ ] Implement pooled HTTP delivery with connect/response timeouts and controlled concurrency
 - [ ] Persist `DeliveryAttempt` and success/failure state
