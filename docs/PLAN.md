@@ -21,10 +21,10 @@ The polling publisher may publish a Kafka record and crash before marking its ou
 
 ## Current status
 
-- Current phase: Phase 1 — Core domain + PostgreSQL completed; awaiting user direction
-- Overall status: Phase 0 `[x]` completed and merged; Phase 1 `[x]` completed
+- Current phase: Phase 2 — Transactional outbox `[~]` in progress
+- Overall status: Phases 0–1 `[x]` completed and merged; Phase 2 `[~]` started on `feature/phase-2-transactional-outbox`
 - Completed: Phase 1 PostgreSQL/Flyway schema; core persistence models/repositories; endpoint create/list and transactional event submission APIs; RFC 9457 errors; real PostgreSQL schema/constraint/API tests; minimal React endpoint/event workflow; clean-volume Compose and browser verification
-- Next: report the completed Phase 1 with local inspection instructions and wait for explicit user direction before starting Phase 2
+- Next: add the append-only V2 outbox schema/model and prove `Event + Delivery + OutboxEvent` transaction atomicity before implementing the Kafka polling publisher
 - Environment note: local port `5432` was already occupied during final verification, so the full stack was successfully verified with the documented host-port overrides (`55432/59092/18080/13000`). This does not change container ports or application topology.
 - Intentionally deferred: CDC/Debezium, multi-tenancy, full secret rotation, OpenTelemetry, hosted deployment, and business-state use of a Kafka DLQ
 
@@ -73,11 +73,11 @@ Acceptance criteria:
 - [x] Schema is created exclusively through versioned migrations
 - [x] Core persistence/API integration tests pass against PostgreSQL
 
-## Phase 2 — Transactional outbox `[ ]`
+## Phase 2 — Transactional outbox `[~]`
 
 Features and tasks:
 
-- [ ] Persist `Event`, `Delivery`, and `OutboxEvent` in one transaction
+- [~] Persist `Event`, `Delivery`, and `OutboxEvent` in one transaction
 - [ ] Implement a batched polling publisher with safe concurrent claiming
 - [ ] Define compact, versioned Kafka delivery command contract
 - [ ] Preserve pending outbox state across Kafka outages
