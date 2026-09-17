@@ -2,6 +2,7 @@ package com.kemselcuk.webhook.delivery;
 
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
@@ -32,6 +33,12 @@ public class DeliveryWorkerProperties {
     @Min(1)
     @Max(100)
     private int concurrency = 3;
+
+    @NotBlank
+    private String groupId = "webhook-delivery-workers-v1";
+
+    @NotNull
+    private Duration busyRedeliveryDelay = Duration.ofMillis(500);
 
     public boolean isEnabled() {
         return enabled;
@@ -73,11 +80,29 @@ public class DeliveryWorkerProperties {
         this.concurrency = concurrency;
     }
 
+    public String getGroupId() {
+        return groupId;
+    }
+
+    public void setGroupId(String groupId) {
+        this.groupId = groupId;
+    }
+
+    public Duration getBusyRedeliveryDelay() {
+        return busyRedeliveryDelay;
+    }
+
+    public void setBusyRedeliveryDelay(Duration busyRedeliveryDelay) {
+        this.busyRedeliveryDelay = busyRedeliveryDelay;
+    }
+
     @jakarta.validation.constraints.AssertTrue(message = "worker durations must be positive")
     public boolean hasPositiveDurations() {
         return isPositive(claimTimeout)
                 && isPositive(connectTimeout)
-                && isPositive(responseTimeout);
+                && isPositive(responseTimeout)
+                && isPositive(busyRedeliveryDelay)
+                && busyRedeliveryDelay.compareTo(Duration.ofMinutes(1)) <= 0;
     }
 
     private static boolean isPositive(Duration value) {
