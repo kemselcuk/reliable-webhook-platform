@@ -22,9 +22,9 @@ The polling publisher may publish a Kafka record and crash before marking its ou
 ## Current status
 
 - Current phase: Phase 3 — Kafka + delivery worker `[x]` completed; awaiting the next explicit phase direction
-- Overall status: Phases 0–3 `[x]` completed and merged to `main` at `6b538f5`
+- Overall status: Phases 0–3 `[x]` completed and merged to `main`; Phase 3 merge `6b538f5` and follow-up documentation `a5db705` are verified by green `main` CI
 - Completed: atomic persistence/outbox publishing; crash-safe delivery leases; bounded HTTP delivery; manual-ack Kafka consumption; PostgreSQL/WireMock transport tests; and the real PostgreSQL + Kafka + WireMock API-to-webhook pipeline with duplicate-command suppression
-- Next: verify green `main` CI, report the phase boundary, then wait before starting Phase 4
+- Next: report the Phase 3 boundary and wait for explicit user direction before starting Phase 4
 - Environment note: local port `5432` was already occupied during final verification, so the full stack was successfully verified with the documented host-port overrides (`55432/59092/18080/13000`). This does not change container ports or application topology.
 - Intentionally deferred: CDC/Debezium, multi-tenancy, full secret rotation, OpenTelemetry, hosted deployment, and business-state use of a Kafka DLQ
 
