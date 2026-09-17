@@ -23,8 +23,8 @@ The polling publisher may publish a Kafka record and crash before marking its ou
 
 - Current phase: Phase 3 — Kafka + delivery worker `[~]` in progress
 - Overall status: Phases 0–2 `[x]` completed and merged; Phase 3 `[~]` started on `feature/phase-3-delivery-worker`
-- Completed: atomic `Event + Delivery + OutboxEvent` persistence; lease/token-based batched publisher; compact keyed Kafka contract; append-only delivery lease migration; atomic claim, stale-lease recovery, token-guarded completion, and PostgreSQL concurrency tests
-- Next: add the bounded HTTP delivery client/orchestrator outside database transactions, then connect it to the Kafka consumer
+- Completed: atomic `Event + Delivery + OutboxEvent` persistence; compact keyed Kafka publishing; crash-safe delivery leases; token-guarded attempt completion; bounded, pooled HTTP delivery outside database transactions; PostgreSQL concurrency and WireMock transport tests
+- Next: connect the worker to a controlled-concurrency Kafka consumer, then prove the complete asynchronous flow with PostgreSQL, Kafka, and WireMock
 - Environment note: local port `5432` was already occupied during final verification, so the full stack was successfully verified with the documented host-port overrides (`55432/59092/18080/13000`). This does not change container ports or application topology.
 - Intentionally deferred: CDC/Debezium, multi-tenancy, full secret rotation, OpenTelemetry, hosted deployment, and business-state use of a Kafka DLQ
 
@@ -95,9 +95,9 @@ Features and tasks:
 - [ ] Configure topic, producer, consumer group, partitions, keys, acknowledgements, and error handling
 - [x] Implement atomic delivery claim/check and current-state load
 - [x] Implement lease/token-based delivery claiming with a claim timeout and stale-claim recovery
-- [ ] Keep external HTTP outside database transactions/row locks and validate the lease token on completion
-- [ ] Implement pooled HTTP delivery with connect/response timeouts and controlled concurrency
-- [ ] Persist `DeliveryAttempt` and success/failure state
+- [x] Keep external HTTP outside database transactions/row locks and validate the lease token on completion
+- [~] Implement pooled HTTP delivery with connect/response timeouts and controlled concurrency
+- [x] Persist `DeliveryAttempt` and success/failure state
 - [ ] Add WireMock/Testcontainers end-to-end tests
 
 Acceptance criteria:

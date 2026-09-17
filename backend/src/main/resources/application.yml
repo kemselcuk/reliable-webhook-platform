@@ -49,6 +49,13 @@ info:
     phase: 2
 
 webhook:
+  delivery:
+    worker:
+      enabled: ${WEBHOOK_DELIVERY_WORKER_ENABLED:false}
+      claim-timeout: ${WEBHOOK_DELIVERY_WORKER_CLAIM_TIMEOUT:PT5M}
+      connect-timeout: ${WEBHOOK_DELIVERY_WORKER_CONNECT_TIMEOUT:PT2S}
+      response-timeout: ${WEBHOOK_DELIVERY_WORKER_RESPONSE_TIMEOUT:PT10S}
+      concurrency: ${WEBHOOK_DELIVERY_WORKER_CONCURRENCY:3}
   outbox:
     publisher:
       enabled: ${WEBHOOK_OUTBOX_PUBLISHER_ENABLED:true}
