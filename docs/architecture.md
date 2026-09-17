@@ -4,7 +4,7 @@
 
 The platform is designed as a small, fully local webhook delivery system. PostgreSQL will be the authoritative store for business state; Kafka will provide asynchronous transport, buffering, and horizontal consumption. A React UI will exercise the real HTTP API and show operational state without becoming a second source of truth.
 
-Phase 1 now includes the PostgreSQL persistence foundation, REST/service increment, and minimal React workflow: a Flyway-managed core schema, JPA mappings, repositories, endpoint registration/listing, and explicit event targeting to enabled endpoints through either REST or the browser. Kafka clients, the outbox, delivery workers, authentication, retries, and signing remain later-phase behavior; the target-flow sections below describe that approved direction rather than current guarantees.
+Phase 2 includes the PostgreSQL persistence foundation, REST/browser event flow, transactional outbox, and Kafka publisher. Event creation records business state and publish intent atomically, and a lease/token-based polling publisher sends compact delivery commands. Delivery workers, authentication, webhook retries, and signing remain later-phase behavior; the target-flow sections below distinguish those future components from current guarantees.
 
 ## Current domain persistence
 
@@ -18,6 +18,8 @@ The V1 migration creates four core tables:
 The REST layer returns DTOs and an app-owned page shape. Endpoint URLs are normalized local URI values after validating absolute `http`/`https` scheme, host presence, and the absence of fragments/user-info. Event submission requires a non-empty, unique list of endpoint IDs and creates one `PENDING` delivery per selected enabled endpoint in one transaction. No broadcast or subscription behavior is implied.
 
 Foreign keys and check constraints protect relationships, enum-compatible status values, attempt counts, HTTP status bounds, and attempt timestamp order. Hibernate validates this schema but does not create or update it. Endpoint secrets are intentionally absent from V1; their storage and signing lifecycle remain a Phase 6 security decision.
+
+The append-only V2 migration adds `outbox_events`. Each row references a delivery and stores the compact JSONB command, availability time, `PENDING`/`CLAIMED`/`PUBLISHED` state, claim token/timestamp, publish-attempt count, bounded failure category, and audit timestamps. Check constraints enforce coherent lease/published fields, while partial indexes support due work and stale-claim scans.
 
 ## Target event flow
 
@@ -40,11 +42,15 @@ Polling publisher -> Kafka delivery command -> worker
                      attempt + state transition in PostgreSQL
 ```
 
-Creating an event currently persists the event and its delivery records in one database transaction. Phase 2 will add publish intent in that same transaction. A polling publisher will then move compact, versioned delivery references to Kafka. Workers will load current state from PostgreSQL, claim eligible work safely, perform bounded-concurrency HTTP delivery, and persist attempts and state transitions.
+Creating an event now persists the event, deliveries, and one outbox command per delivery in one database transaction. The Phase 2 publisher moves compact, versioned delivery references to Kafka. Phase 3 workers will load current state from PostgreSQL, claim eligible delivery work safely, perform bounded-concurrency HTTP delivery, and persist attempts and state transitions.
 
 ## Durability and delivery semantics
 
-The outbox closes the failure window between business state and publish intent. If Kafka is unavailable, the outbox row remains pending and can be retried. A publisher can still publish a record and crash before marking its outbox row published; the same delivery command may therefore appear more than once. Worker-side state checks and atomic claims must make duplicate commands harmless.
+The outbox closes the failure window between business state and publish intent. A publisher claims a bounded batch in a short PostgreSQL transaction using `FOR UPDATE SKIP LOCKED`, commits that claim, publishes outside the database transaction, and then performs a token-guarded state update. If Kafka is unavailable or acknowledgement times out, the row returns to `PENDING` with a durable next availability time and bounded failure category. Crashed `CLAIMED` rows become eligible again after the claim timeout.
+
+A publisher can still publish a record and crash before marking its outbox row `PUBLISHED`; the same delivery command may therefore appear more than once. Producer idempotence helps with producer-level retries but does not make the PostgreSQL/Kafka boundary atomic. Worker-side state checks and atomic claims must make duplicate commands harmless.
+
+The Kafka contract is topic `webhook.delivery.commands.v1`, key `deliveryId`, and value `{"version":1,"deliveryId":"..."}`. The small reference keeps PostgreSQL authoritative; consumers load current business state instead of treating Kafka payloads as a second database. The local topic has three partitions, so commands for one delivery retain key-based partition ordering while different deliveries can be processed in parallel.
 
 External HTTP cannot participate in the PostgreSQL transaction. The target guarantee is at-least-once delivery: a receiver may observe a request again around worker or network failures. Stable event and delivery identifiers, idempotency guidance, and HMAC signing will help receivers handle that contract. Exactly-once delivery is not claimed.
 
@@ -66,10 +72,10 @@ Actuator health endpoints are available in Phase 0. Later observability work sho
 
 Compose configures separate Kafka listeners so container clients and host tools receive usable advertised addresses:
 
-- `kafka:29092` is the `INTERNAL` bootstrap address for services on the Compose network (the future backend publisher and worker);
+- `kafka:29092` is the `INTERNAL` bootstrap address for services on the Compose network (the current backend publisher and future worker);
 - `localhost:${KAFKA_PORT:-9092}` is the `EXTERNAL` bootstrap address for host-side Kafka tools, using the published port.
 
-The controller listener remains internal to the single-node KRaft broker. Phase 0 starts this broker as local infrastructure, but the backend has no Kafka client and does not connect to it yet.
+The controller listener remains internal to the single-node KRaft broker. The Phase 2 backend uses Spring Kafka with acknowledgements set to `all` and producer idempotence enabled. Topic creation is declarative and broker unavailability is not made fatal to application context startup; unpublished intent remains in PostgreSQL.
 
 ## Local topology
 
@@ -80,7 +86,7 @@ Compose defines four services for the local topology:
 - the Spring Boot backend, built as a non-root Java runtime image;
 - the React build served by an unprivileged nginx image, proxying `/api` to the backend.
 
-The backend and frontend health checks use readiness/HTTP endpoints. Compose dependencies wait for infrastructure and backend health. The Phase 1 backend connects to PostgreSQL, runs Flyway, and includes database health in readiness; it still has no Kafka client.
+The backend and frontend health checks use readiness/HTTP endpoints. Compose dependencies wait for infrastructure and backend health. The Phase 2 backend connects to PostgreSQL and Kafka, runs Flyway, and starts the outbox polling publisher after the broker is healthy in Compose.
 
 ## Phase boundaries
 

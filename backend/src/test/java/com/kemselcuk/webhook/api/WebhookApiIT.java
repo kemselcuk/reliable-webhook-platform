@@ -45,7 +45,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @Testcontainers
 @SpringBootTest(
         classes = WebhookPlatformApplication.class,
-        webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT
+        webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
+        properties = "webhook.outbox.publisher.enabled=false"
 )
 class WebhookApiIT {
 

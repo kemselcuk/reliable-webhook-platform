@@ -8,6 +8,14 @@ spring:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${POSTGRES_DB:webhook}}
     username: ${SPRING_DATASOURCE_USERNAME:${POSTGRES_USER:webhook}}
     password: ${SPRING_DATASOURCE_PASSWORD:${POSTGRES_PASSWORD:webhook-local-only}}
+  kafka:
+    bootstrap-servers: ${SPRING_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      acks: all
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      properties:
+        enable.idempotence: true
   jpa:
     open-in-view: false
     hibernate:
@@ -38,4 +46,15 @@ management:
 info:
   app:
     name: ${spring.application.name}
-    phase: 1
+    phase: 2
+
+webhook:
+  outbox:
+    publisher:
+      enabled: ${WEBHOOK_OUTBOX_PUBLISHER_ENABLED:true}
+      topic: ${WEBHOOK_OUTBOX_PUBLISHER_TOPIC:webhook.delivery.commands.v1}
+      batch-size: ${WEBHOOK_OUTBOX_PUBLISHER_BATCH_SIZE:50}
+      poll-interval: ${WEBHOOK_OUTBOX_PUBLISHER_POLL_INTERVAL:PT1S}
+      claim-timeout: ${WEBHOOK_OUTBOX_PUBLISHER_CLAIM_TIMEOUT:PT5M}
+      send-timeout: ${WEBHOOK_OUTBOX_PUBLISHER_SEND_TIMEOUT:PT10S}
+      retry-delay: ${WEBHOOK_OUTBOX_PUBLISHER_RETRY_DELAY:PT5S}

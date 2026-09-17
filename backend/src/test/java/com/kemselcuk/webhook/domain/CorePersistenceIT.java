@@ -25,7 +25,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @Testcontainers
-@SpringBootTest(classes = WebhookPlatformApplication.class)
+@SpringBootTest(
+        classes = WebhookPlatformApplication.class,
+        properties = "webhook.outbox.publisher.enabled=false"
+)
 class CorePersistenceIT {
 
     @Container
