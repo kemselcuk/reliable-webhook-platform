@@ -21,10 +21,10 @@ The polling publisher may publish a Kafka record and crash before marking its ou
 
 ## Current status
 
-- Current phase: Phase 2 — Transactional outbox completed; awaiting user direction
-- Overall status: Phases 0–2 `[x]` completed
-- Completed: atomic `Event + Delivery + OutboxEvent` persistence; lease/token-based batched publisher; compact keyed Kafka contract; real PostgreSQL/Kafka concurrency, outage/recovery, duplicate-window, and clean Compose verification
-- Next: report the completed Phase 2 with local inspection instructions and wait for explicit user direction before starting Phase 3
+- Current phase: Phase 3 — Kafka + delivery worker `[x]` completed; awaiting the next explicit phase direction
+- Overall status: Phases 0–3 `[x]` completed; Phase 3 is ready to merge from `feature/phase-3-delivery-worker`
+- Completed: atomic persistence/outbox publishing; crash-safe delivery leases; bounded HTTP delivery; manual-ack Kafka consumption; PostgreSQL/WireMock transport tests; and the real PostgreSQL + Kafka + WireMock API-to-webhook pipeline with duplicate-command suppression
+- Next: merge and verify Phase 3 on `main`, report the phase boundary, then wait before starting Phase 4
 - Environment note: local port `5432` was already occupied during final verification, so the full stack was successfully verified with the documented host-port overrides (`55432/59092/18080/13000`). This does not change container ports or application topology.
 - Intentionally deferred: CDC/Debezium, multi-tenancy, full secret rotation, OpenTelemetry, hosted deployment, and business-state use of a Kafka DLQ
 
@@ -88,23 +88,23 @@ Acceptance criteria:
 - [x] Kafka unavailability never loses the outbox record
 - [x] Publishing resumes after Kafka recovery; duplicate-publication behavior is tested and documented
 
-## Phase 3 — Kafka + delivery worker `[ ]`
+## Phase 3 — Kafka + delivery worker `[x]`
 
 Features and tasks:
 
-- [ ] Configure topic, producer, consumer group, partitions, keys, acknowledgements, and error handling
-- [ ] Implement atomic delivery claim/check and current-state load
-- [ ] Implement lease/token-based delivery claiming with a claim timeout and stale-claim recovery
-- [ ] Keep external HTTP outside database transactions/row locks and validate the lease token on completion
-- [ ] Implement pooled HTTP delivery with connect/response timeouts and controlled concurrency
-- [ ] Persist `DeliveryAttempt` and success/failure state
-- [ ] Add WireMock/Testcontainers end-to-end tests
+- [x] Configure topic, producer, consumer group, partitions, keys, acknowledgements, and error handling
+- [x] Implement atomic delivery claim/check and current-state load
+- [x] Implement lease/token-based delivery claiming with a claim timeout and stale-claim recovery
+- [x] Keep external HTTP outside database transactions/row locks and validate the lease token on completion
+- [x] Implement pooled HTTP delivery with connect/response timeouts and controlled concurrency
+- [x] Persist `DeliveryAttempt` and success/failure state
+- [x] Add WireMock/Testcontainers end-to-end tests
 
 Acceptance criteria:
 
-- [ ] Event submission reaches a WireMock webhook asynchronously through PostgreSQL, outbox, Kafka, and worker
-- [ ] A 2xx response results in `SUCCESS` with a recorded attempt
-- [ ] A crashed worker's expired lease is recovered, and a stale worker cannot overwrite a newer claim
+- [x] Event submission reaches a WireMock webhook asynchronously through PostgreSQL, outbox, Kafka, and worker
+- [x] A 2xx response results in `SUCCESS` with a recorded attempt
+- [x] A crashed worker's expired lease is recovered, and a stale worker cannot overwrite a newer claim
 
 ## Phase 4 — Reliable retry `[ ]`
 
@@ -222,3 +222,4 @@ Record future material changes as: `Planned`, `Implemented`, `Reason`, and `Trad
 - Phase 0 final verification used host-port overrides because local port `5432` was occupied. PostgreSQL, Kafka, backend, and frontend all reported healthy; direct backend health/readiness, frontend HTTP, and frontend-to-backend proxy requests returned HTTP 200. The frontend healthcheck was corrected to use `127.0.0.1` because the image resolved `localhost` to IPv6 while nginx listened on IPv4.
 - Phase 1 final verification used a separate Compose project and fresh named volumes to prove clean Flyway startup without deleting existing local data. The default project volume in this workspace contains an earlier, unpublished V1 migration draft from implementation and therefore correctly fails Flyway checksum validation until that development-only volume is intentionally recreated.
 - Phase 2 final verification used the separate `rwp-phase2-verify` Compose project with fresh volumes and host ports `56432/59095/18083/13003`. Normal publication and a live Kafka stop/start were exercised: the outage row remained durable as `PENDING/TIMEOUT`, recovered to `PUBLISHED`, and duplicate Kafka commands were observed as permitted by the documented at-least-once boundary.
+- Phase 3 final verification used the separate `rwp-phase3-verify` Compose project with fresh volumes and host ports `57432/59096/18084/13004`, plus a temporary local receiver on `18091`. A real API event reached the receiver once with stable headers; PostgreSQL showed `SUCCESS`, one HTTP `204` attempt, and a `PUBLISHED` outbox row. Backend verification passed 18 unit and 29 integration tests; frontend lint, typecheck, 6 tests, production build, and Compose validation passed.

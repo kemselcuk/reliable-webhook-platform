@@ -10,6 +10,15 @@ spring:
     password: ${SPRING_DATASOURCE_PASSWORD:${POSTGRES_PASSWORD:webhook-local-only}}
   kafka:
     bootstrap-servers: ${SPRING_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      enable-auto-commit: false
+      auto-offset-reset: earliest
+      properties:
+        max.poll.interval.ms: ${WEBHOOK_DELIVERY_WORKER_MAX_POLL_INTERVAL_MS:120000}
+    listener:
+      ack-mode: manual_immediate
     producer:
       acks: all
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
@@ -46,9 +55,18 @@ management:
 info:
   app:
     name: ${spring.application.name}
-    phase: 2
+    phase: 3
 
 webhook:
+  delivery:
+    worker:
+      enabled: ${WEBHOOK_DELIVERY_WORKER_ENABLED:false}
+      claim-timeout: ${WEBHOOK_DELIVERY_WORKER_CLAIM_TIMEOUT:PT5M}
+      connect-timeout: ${WEBHOOK_DELIVERY_WORKER_CONNECT_TIMEOUT:PT2S}
+      response-timeout: ${WEBHOOK_DELIVERY_WORKER_RESPONSE_TIMEOUT:PT10S}
+      concurrency: ${WEBHOOK_DELIVERY_WORKER_CONCURRENCY:3}
+      group-id: ${WEBHOOK_DELIVERY_WORKER_GROUP_ID:webhook-delivery-workers-v1}
+      busy-redelivery-delay: ${WEBHOOK_DELIVERY_WORKER_BUSY_REDELIVERY_DELAY:PT0.5S}
   outbox:
     publisher:
       enabled: ${WEBHOOK_OUTBOX_PUBLISHER_ENABLED:true}
