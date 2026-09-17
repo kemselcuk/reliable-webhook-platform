@@ -120,4 +120,4 @@ Do not treat an internally completed coding increment as a completed phase; the 
 
 ## Current recovery point
 
-At the latest update, Phases 0–2 are complete and Phase 3 is active on `feature/phase-3-delivery-worker`. All Phase 3 behavior and acceptance scenarios are implemented, including the real PostgreSQL/outbox/Kafka/WireMock pipeline and duplicate-command suppression. The remaining work is final full-suite and clean Compose verification, phase-completion evidence, manager merge to `main`, and green `main` CI confirmation. Re-read `docs/PLAN.md` and Git history for the exact current branch and commit state.
+At the latest update, Phases 0–3 are complete. Phase 3 passed the full backend/frontend suites, a fresh real Compose delivery, and all acceptance criteria on `feature/phase-3-delivery-worker`; the manager is merging and verifying `main`. Stop at this phase boundary and wait for explicit user direction before starting Phase 4. Re-read `docs/PLAN.md` and Git history for the exact branch and commit state.

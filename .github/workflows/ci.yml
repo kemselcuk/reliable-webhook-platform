@@ -54,7 +54,7 @@ jobs:
         run: npm run build
 
   integration:
-    name: Foundation integration path
+    name: Integration tests
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -68,7 +68,7 @@ jobs:
           distribution: temurin
           java-version: "21"
           cache: maven
-      - name: Run Failsafe HTTP integration tests
+      - name: Run Failsafe integration tests
         run: ./mvnw -B -DskipUnitTests=true verify
       - name: Validate Compose definition
         working-directory: .
