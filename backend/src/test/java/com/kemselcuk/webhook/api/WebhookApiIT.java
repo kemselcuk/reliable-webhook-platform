@@ -3,22 +3,29 @@ package com.kemselcuk.webhook.api;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kemselcuk.webhook.WebhookPlatformApplication;
+import com.kemselcuk.webhook.domain.OutboxEvent;
+import com.kemselcuk.webhook.domain.OutboxStatus;
 import com.kemselcuk.webhook.domain.WebhookEndpoint;
 import com.kemselcuk.webhook.domain.repository.DeliveryRepository;
 import com.kemselcuk.webhook.domain.repository.EventRepository;
+import com.kemselcuk.webhook.domain.repository.OutboxEventRepository;
 import com.kemselcuk.webhook.domain.repository.WebhookEndpointRepository;
+import com.kemselcuk.webhook.event.api.CreateEventRequest;
+import com.kemselcuk.webhook.event.api.EventService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -29,8 +36,11 @@ import java.util.UUID;
 import java.time.Instant;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @Testcontainers
 @SpringBootTest(
@@ -70,8 +80,18 @@ class WebhookApiIT {
     @Autowired
     private DeliveryRepository deliveryRepository;
 
+    @Autowired
+    private OutboxEventRepository outboxEventRepository;
+
+    @Autowired
+    private EventService eventService;
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+
     @BeforeEach
     void clearDatabase() {
+        outboxEventRepository.deleteAllInBatch();
         deliveryRepository.deleteAllInBatch();
         eventRepository.deleteAllInBatch();
         endpointRepository.deleteAllInBatch();
@@ -195,6 +215,7 @@ class WebhookApiIT {
         assertThat(response.getBody().get("code").asText()).isEqualTo("VALIDATION_ERROR");
         assertThat(eventRepository.count()).isZero();
         assertThat(deliveryRepository.count()).isZero();
+        assertThat(outboxEventRepository.count()).isZero();
     }
 
     @Test
@@ -220,6 +241,69 @@ class WebhookApiIT {
         assertThat(deliveryRepository.count()).isEqualTo(2);
         assertThat(deliveryRepository.findAll()).extracting(delivery -> delivery.getStatus().name())
                 .containsOnly("PENDING");
+        assertThat(outboxEventRepository.count()).isEqualTo(2);
+        Set<String> deliveryIds = response.getBody().get("deliveryIds").valueStream()
+                .map(JsonNode::asText)
+                .collect(Collectors.toSet());
+        Set<String> outboxDeliveryIds = outboxEventRepository.findAll().stream()
+                .map(outboxEvent -> outboxEvent.getPayload().get("deliveryId").asText())
+                .collect(Collectors.toSet());
+        assertThat(outboxDeliveryIds).containsExactlyInAnyOrderElementsOf(deliveryIds);
+        assertThat(outboxEventRepository.findAll())
+                .allSatisfy(outboxEvent -> {
+                    assertThat(outboxEvent.getEventType())
+                            .isEqualTo(OutboxEvent.DELIVERY_REQUESTED_EVENT_TYPE);
+                    assertThat(outboxEvent.getStatus()).isEqualTo(OutboxStatus.PENDING);
+                    assertThat(outboxEvent.getPayload()).hasSize(2);
+                    assertThat(outboxEvent.getPayload().get("version").asInt()).isEqualTo(1);
+                });
+    }
+
+    @Test
+    void outboxInsertFailureRollsBackEventAndDeliveries() throws Exception {
+        WebhookEndpoint endpoint = endpointRepository.saveAndFlush(
+                WebhookEndpoint.create("Orders", "https://orders.test/hooks")
+        );
+        installFailingOutboxInsertTrigger();
+
+        try {
+            assertThatThrownBy(() -> eventService.create(new CreateEventRequest(
+                    "order.created",
+                    objectMapper.readTree("{\"orderId\":\"order-123\"}"),
+                    List.of(endpoint.getId())
+            ))).isInstanceOf(DataIntegrityViolationException.class);
+
+            assertThat(eventRepository.count()).isZero();
+            assertThat(deliveryRepository.count()).isZero();
+            assertThat(outboxEventRepository.count()).isZero();
+        } finally {
+            removeFailingOutboxInsertTrigger();
+        }
+    }
+
+    private void installFailingOutboxInsertTrigger() {
+        jdbcTemplate.execute("""
+                CREATE OR REPLACE FUNCTION test_fail_outbox_insert()
+                RETURNS trigger
+                LANGUAGE plpgsql
+                AS $$
+                BEGIN
+                    RAISE EXCEPTION 'forced outbox insert failure' USING ERRCODE = '23514';
+                END;
+                $$
+                """);
+        jdbcTemplate.execute("""
+                CREATE TRIGGER test_fail_outbox_insert_trigger
+                BEFORE INSERT ON outbox_events
+                FOR EACH ROW EXECUTE FUNCTION test_fail_outbox_insert()
+                """);
+    }
+
+    private void removeFailingOutboxInsertTrigger() {
+        jdbcTemplate.execute("""
+                DROP TRIGGER IF EXISTS test_fail_outbox_insert_trigger ON outbox_events
+                """);
+        jdbcTemplate.execute("DROP FUNCTION IF EXISTS test_fail_outbox_insert()");
     }
 
     @Test
@@ -238,6 +322,7 @@ class WebhookApiIT {
         assertThat(response.getBody().get("code").asText()).isEqualTo("ENDPOINT_NOT_FOUND");
         assertThat(eventRepository.count()).isZero();
         assertThat(deliveryRepository.count()).isZero();
+        assertThat(outboxEventRepository.count()).isZero();
     }
 
     @Test
@@ -261,6 +346,7 @@ class WebhookApiIT {
         assertThat(response.getBody().get("code").asText()).isEqualTo("ENDPOINT_DISABLED");
         assertThat(eventRepository.count()).isZero();
         assertThat(deliveryRepository.count()).isZero();
+        assertThat(outboxEventRepository.count()).isZero();
     }
 
     @Test

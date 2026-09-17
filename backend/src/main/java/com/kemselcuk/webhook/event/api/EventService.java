@@ -2,9 +2,11 @@ package com.kemselcuk.webhook.event.api;
 
 import com.kemselcuk.webhook.domain.Delivery;
 import com.kemselcuk.webhook.domain.Event;
+import com.kemselcuk.webhook.domain.OutboxEvent;
 import com.kemselcuk.webhook.domain.WebhookEndpoint;
 import com.kemselcuk.webhook.domain.repository.DeliveryRepository;
 import com.kemselcuk.webhook.domain.repository.EventRepository;
+import com.kemselcuk.webhook.domain.repository.OutboxEventRepository;
 import com.kemselcuk.webhook.domain.repository.WebhookEndpointRepository;
 import com.kemselcuk.webhook.web.ApiRequestValidationException;
 import com.kemselcuk.webhook.web.DisabledEndpointException;
@@ -23,15 +25,18 @@ public class EventService {
 
     private final EventRepository eventRepository;
     private final DeliveryRepository deliveryRepository;
+    private final OutboxEventRepository outboxEventRepository;
     private final WebhookEndpointRepository endpointRepository;
 
     public EventService(
             EventRepository eventRepository,
             DeliveryRepository deliveryRepository,
+            OutboxEventRepository outboxEventRepository,
             WebhookEndpointRepository endpointRepository
     ) {
         this.eventRepository = eventRepository;
         this.deliveryRepository = deliveryRepository;
+        this.outboxEventRepository = outboxEventRepository;
         this.endpointRepository = endpointRepository;
     }
 
@@ -62,6 +67,11 @@ public class EventService {
                 .map(deliveryRepository::save)
                 .toList();
         deliveryRepository.flush();
+        deliveries.stream()
+                .map(OutboxEvent::forDelivery)
+                .map(outboxEventRepository::save)
+                .toList();
+        outboxEventRepository.flush();
 
         return new EventResponse(
                 event.getId(),
