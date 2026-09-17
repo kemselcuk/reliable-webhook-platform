@@ -2,7 +2,7 @@
 
 Reliable Webhook Platform is a local-first Spring Boot and React workspace for exploring durable, asynchronous webhook delivery. The long-term design uses PostgreSQL as the source of truth and Apache Kafka as the transport between durable work state and delivery workers.
 
-Phase 2 currently provides the repository foundation, core PostgreSQL persistence, and a transactional outbox publisher:
+Phase 3 currently provides the repository foundation, core PostgreSQL persistence, a transactional outbox publisher, and an asynchronous delivery worker:
 
 - a Java 21 / Spring Boot 3.5.16 backend;
 - a small React + TypeScript + Vite frontend;
@@ -14,9 +14,12 @@ Phase 2 currently provides the repository foundation, core PostgreSQL persistenc
 - Spring Data JPA repositories with JSONB event payload mapping and database constraints;
 - atomic `Event + Delivery + OutboxEvent` creation in one PostgreSQL transaction;
 - a lease/token-based polling publisher that sends compact delivery commands to Kafka;
+- a lease/token-based delivery worker that claims work in PostgreSQL and sends bounded HTTP requests outside database transactions;
+- a manual-acknowledgment Kafka listener with duplicate-command state checks and bounded worker concurrency;
+- PostgreSQL, Kafka, and WireMock integration coverage for the complete asynchronous API-to-webhook flow;
 - a minimal browser workflow for endpoint registration/listing and event submission to selected endpoints.
 
-The Kafka delivery worker, webhook retries, signing, and metrics remain later-phase work. The current REST flow durably records publish intent and asynchronously publishes a delivery reference to Kafka, but it does not send an external webhook yet.
+Business retry scheduling, HMAC signing, authentication, and metrics remain later-phase work. The current REST flow durably records publish intent, publishes a compact delivery reference to Kafka, and asynchronously sends the event payload to the configured webhook endpoint.
 
 ## Repository layout
 
@@ -46,7 +49,7 @@ cd backend
 ./mvnw spring-boot:run
 ```
 
-The backend expects PostgreSQL at `localhost:5432` and Kafka at `localhost:9092` using the local defaults. Start both Compose infrastructure services first, or override the `SPRING_DATASOURCE_*` and `SPRING_KAFKA_BOOTSTRAP_SERVERS` settings. Flyway applies versioned migrations on startup and Hibernate validates the mapped schema; Hibernate does not create or update tables. Set `WEBHOOK_OUTBOX_PUBLISHER_ENABLED=false` only when intentionally running the API without publication.
+The backend expects PostgreSQL at `localhost:5432` and Kafka at `localhost:9092` using the local defaults. Start both Compose infrastructure services first, or override the `SPRING_DATASOURCE_*` and `SPRING_KAFKA_BOOTSTRAP_SERVERS` settings. Flyway applies versioned migrations on startup and Hibernate validates the mapped schema; Hibernate does not create or update tables. A host-run backend must set `WEBHOOK_DELIVERY_WORKER_ENABLED=true` to consume commands and deliver webhooks; Compose enables the worker automatically. Set `WEBHOOK_OUTBOX_PUBLISHER_ENABLED=false` only when intentionally running the API without publication.
 
 The backend listens on `http://localhost:8080`. Check it with:
 
@@ -73,7 +76,7 @@ npm run dev
 
 Vite serves the UI at `http://localhost:5173` and proxies `/api` to the backend at port 8080.
 
-### REST API and Phase 2 outbox flow
+### REST API and asynchronous delivery flow
 
 Create and list webhook endpoints:
 
@@ -92,7 +95,15 @@ curl -i -X POST http://localhost:8080/api/events \
   -d '{"type":"order.created","payload":{"orderId":"order-123"},"endpointIds":["<endpoint-uuid>"]}'
 ```
 
-Endpoint creation returns `201 Created` with a `Location` header. Event creation atomically stores the event, one `PENDING` delivery per selected endpoint, and one `PENDING` outbox command per delivery. The polling publisher claims due outbox rows, publishes `{"version":1,"deliveryId":"..."}` using the delivery ID as Kafka key, and marks acknowledged rows `PUBLISHED`. Invalid requests and endpoint lookup/state failures use RFC 9457 `application/problem+json` responses with a stable `code` property. API idempotency and authentication remain later-phase concerns.
+Endpoint creation returns `201 Created` with a `Location` header. Event creation atomically stores the event, one `PENDING` delivery per selected endpoint, and one `PENDING` outbox command per delivery. The polling publisher claims due outbox rows, publishes `{"version":1,"deliveryId":"..."}` using the delivery ID as Kafka key, and marks acknowledged rows `PUBLISHED`. The enabled worker validates the command key/version, atomically claims the current delivery lease, loads the current JSONB payload and endpoint, sends the request outside the database transaction, and records the token-guarded outcome. Invalid requests and endpoint lookup/state failures use RFC 9457 `application/problem+json` responses with a stable `code` property. API idempotency and authentication remain later-phase concerns.
+
+The worker sends the JSONB-derived payload as `application/json` and requests JSON responses. JSON semantics are preserved, but the original request's whitespace and object-key byte order are not promised. It sends these stable headers:
+
+- `X-Webhook-Id`: event UUID;
+- `X-Delivery-Id`: delivery UUID;
+- `X-Webhook-Event`: event type.
+
+HMAC signatures and a timestamp header are deferred to Phase 6. Non-2xx responses and bounded transport failures currently leave the delivery `FAILED` with a recorded attempt; automatic retry and backoff are deferred to Phase 4.
 
 ### Full local Compose stack
 
@@ -101,13 +112,22 @@ docker compose up --build -d
 docker compose ps
 ```
 
-Open `http://localhost:3000`. From the UI, create an endpoint, select it in the event form, and submit the sample JSON payload. Phase 2 stores the event, delivery, and outbox intent, then publishes the compact command to Kafka. The delivery itself remains `PENDING` until the Phase 3 worker exists.
+Open `http://localhost:3000`. From the UI, create an endpoint, select it in the event form, and submit the sample JSON payload. Phase 3 stores the event, delivery, and outbox intent, then publishes and consumes the compact command asynchronously. A successful webhook becomes `SUCCESS`; failed delivery currently remains `FAILED` until retry behavior is added in Phase 4.
 
 Inspect recent outbox state:
 
 ```bash
 docker compose exec postgres psql -U webhook -d webhook -c \
   "select delivery_id,status,publish_attempts,last_error,created_at from outbox_events order by created_at desc limit 10;"
+```
+
+Inspect delivery and attempt state:
+
+```bash
+docker compose exec postgres psql -U webhook -d webhook -c \
+  "select id,event_id,webhook_endpoint_id,status,attempt_count,claim_token,claimed_at,updated_at from deliveries order by created_at desc limit 10;"
+docker compose exec postgres psql -U webhook -d webhook -c \
+  "select delivery_id,attempt_number,outcome,http_status,error_code,started_at,completed_at from delivery_attempts order by completed_at desc limit 20;"
 ```
 
 Read published commands from the beginning of the topic:
@@ -151,7 +171,7 @@ docker compose config
 
 ## Architecture and guarantees
 
-See [docs/architecture.md](docs/architecture.md) for the target flow, failure boundaries, claim/lease direction, and the explicit guarantees that will be added phase by phase. In particular, external HTTP is outside the database transaction, so the target platform is at-least-once rather than exactly-once.
+See [docs/architecture.md](docs/architecture.md) for the current flow, failure boundaries, claim/lease behavior, and explicit guarantees. External HTTP is outside the database transaction, so delivery is at-least-once rather than exactly-once.
 
 ## Git workflow
 
@@ -159,4 +179,4 @@ Use a focused `feature/`, `fix/`, `refactor/`, or `docs/` branch for meaningful 
 
 ## Current limitations
 
-There is no Kafka consumer/delivery worker, external webhook HTTP call, delivery retry policy, HMAC signing, authentication, dashboard, or hosted deployment yet. Phase 2 publishes delivery commands at least once: a crash after Kafka acknowledgement but before the PostgreSQL `PUBLISHED` update can cause the same stable delivery command to be published again. Phase 3 worker state checks and atomic claims will make those duplicate commands harmless.
+Business retry scheduling/classification, HMAC signing, authentication, dashboarding, and hosted deployment are not implemented yet. The outbox and worker are both at-least-once: a crash around Kafka acknowledgement or external HTTP completion can produce duplicate commands or requests. Lease expiry and claim tokens prevent stale workers from overwriting newer state, and a duplicate command received after `SUCCESS` is terminal and does not resend the request. The worker uses manual-immediate acknowledgments, nacks fresh `PROCESSING` deliveries for delayed redelivery, and retries unexpected infrastructure errors with a bounded fixed delay and no finite recovery cutoff. HTTP connect/response timeouts and worker concurrency are bounded by `webhook.delivery.worker` properties.

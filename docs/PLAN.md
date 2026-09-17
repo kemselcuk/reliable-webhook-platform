@@ -23,8 +23,8 @@ The polling publisher may publish a Kafka record and crash before marking its ou
 
 - Current phase: Phase 3 — Kafka + delivery worker `[~]` in progress
 - Overall status: Phases 0–2 `[x]` completed and merged; Phase 3 `[~]` started on `feature/phase-3-delivery-worker`
-- Completed: atomic `Event + Delivery + OutboxEvent` persistence; compact keyed Kafka publishing; crash-safe delivery leases; token-guarded attempt completion; bounded, pooled HTTP delivery outside database transactions; PostgreSQL concurrency and WireMock transport tests
-- Next: prove the complete asynchronous API-to-webhook flow with PostgreSQL, Kafka, and WireMock, then finish Phase 3 documentation and Compose verification
+- Completed: atomic persistence/outbox publishing; crash-safe delivery leases; bounded HTTP delivery; manual-ack Kafka consumption; PostgreSQL/WireMock transport tests; and the real PostgreSQL + Kafka + WireMock API-to-webhook pipeline with duplicate-command suppression
+- Next: run final backend/frontend/Compose verification, exercise the clean local stack, update final phase evidence, and merge Phase 3 to `main`
 - Environment note: local port `5432` was already occupied during final verification, so the full stack was successfully verified with the documented host-port overrides (`55432/59092/18080/13000`). This does not change container ports or application topology.
 - Intentionally deferred: CDC/Debezium, multi-tenancy, full secret rotation, OpenTelemetry, hosted deployment, and business-state use of a Kafka DLQ
 
@@ -98,13 +98,13 @@ Features and tasks:
 - [x] Keep external HTTP outside database transactions/row locks and validate the lease token on completion
 - [x] Implement pooled HTTP delivery with connect/response timeouts and controlled concurrency
 - [x] Persist `DeliveryAttempt` and success/failure state
-- [ ] Add WireMock/Testcontainers end-to-end tests
+- [x] Add WireMock/Testcontainers end-to-end tests
 
 Acceptance criteria:
 
-- [ ] Event submission reaches a WireMock webhook asynchronously through PostgreSQL, outbox, Kafka, and worker
-- [ ] A 2xx response results in `SUCCESS` with a recorded attempt
-- [ ] A crashed worker's expired lease is recovered, and a stale worker cannot overwrite a newer claim
+- [x] Event submission reaches a WireMock webhook asynchronously through PostgreSQL, outbox, Kafka, and worker
+- [x] A 2xx response results in `SUCCESS` with a recorded attempt
+- [x] A crashed worker's expired lease is recovered, and a stale worker cannot overwrite a newer claim
 
 ## Phase 4 — Reliable retry `[ ]`
 
