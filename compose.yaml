@@ -60,6 +60,7 @@ services:
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       WEBHOOK_OUTBOX_PUBLISHER_ENABLED: "true"
       WEBHOOK_DELIVERY_WORKER_ENABLED: "true"
+      WEBHOOK_DELIVERY_RETRY_SCHEDULER_ENABLED: "true"
     depends_on:
       postgres:
         condition: service_healthy
