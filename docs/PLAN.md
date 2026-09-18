@@ -21,10 +21,10 @@ The polling publisher may publish a Kafka record and crash before marking its ou
 
 ## Current status
 
-- Current phase: Phase 4 — Reliable retry `[x]` completed; awaiting the next explicit phase direction
-- Overall status: Phases 0–4 `[x]` completed and merged to `main` at `3069c34`; main CI run `35338206471` is green
-- Completed: atomic persistence/outbox publishing; crash-safe delivery leases; bounded HTTP delivery; manual-ack Kafka consumption; durable failure classification and retry state; exponential backoff with jitter and `Retry-After`; outbox-based due-retry requeueing; `DEAD` transition; atomic manual replay; and PostgreSQL/Kafka/WireMock failure-path coverage
-- Next: report the Phase 4 boundary to the user, then wait for authorization before Phase 5
+- Current phase: Phase 5 — Idempotency + concurrency safety `[~]` in progress
+- Overall status: Phases 0–4 `[x]` completed and merged to `main`; Phase 5 implementation has started on `feature/phase-5-idempotency-concurrency`
+- Completed: atomic persistence/outbox publishing; crash-safe delivery leases; bounded HTTP delivery; manual-ack Kafka consumption; durable failure classification and retry state; exponential backoff with jitter and `Retry-After`; outbox-based due-retry requeueing; `DEAD` transition; atomic manual replay; API idempotency with canonical request hashing and conflict detection; and PostgreSQL/Kafka/WireMock failure-path coverage
+- Next: harden concurrent idempotent requests and worker duplicate-message handling, then add the remaining concurrency acceptance coverage
 - Environment note: local port `5432` was already occupied during final verification, so the full stack was successfully verified with the documented host-port overrides (`55432/59092/18080/13000`). This does not change container ports or application topology.
 - Intentionally deferred: CDC/Debezium, multi-tenancy, full secret rotation, OpenTelemetry, hosted deployment, and business-state use of a Kafka DLQ
 
@@ -122,13 +122,13 @@ Acceptance criteria:
 - [x] Timeouts retry; permanent failures do not retry unnecessarily
 - [x] Max attempts result in `DEAD`; manual replay works
 
-## Phase 5 — Idempotency + concurrency safety `[ ]`
+## Phase 5 — Idempotency + concurrency safety `[~]`
 
 Features and tasks:
 
-- [ ] Implement API `Idempotency-Key`, canonical request hash, stored response reference, and unique constraint
-- [ ] Reject reuse of a key with a different payload
-- [ ] Harden atomic delivery claiming and duplicate Kafka message handling
+- [x] Implement API `Idempotency-Key`, canonical request hash, stored response reference, and unique constraint
+- [x] Reject reuse of a key with a different payload
+- [~] Harden atomic delivery claiming and duplicate Kafka message handling
 - [ ] Add concurrent request and worker tests
 
 Acceptance criteria:

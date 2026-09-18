@@ -4,7 +4,7 @@
 
 The platform is a small, fully local webhook delivery system. PostgreSQL is authoritative for business state; Kafka provides asynchronous transport, buffering, and horizontal consumption. A React UI exercises the real HTTP API and shows operational state without becoming a second source of truth.
 
-Phase 4 includes the PostgreSQL persistence foundation, REST/browser event flow, transactional outbox, Kafka publisher, bounded delivery worker, durable retry policy, due-retry requeueing, and manual replay. Event creation records business state and publish intent atomically; the publisher sends compact delivery commands and the worker claims and delivers them asynchronously. API idempotency, authentication, HMAC signing, and observability remain later-phase behavior.
+Phase 4 includes the PostgreSQL persistence foundation, REST/browser event flow, transactional outbox, Kafka publisher, bounded delivery worker, durable retry policy, due-retry requeueing, and manual replay. The first Phase 5 increment adds API idempotency for event submission: a canonical request hash and stored response reference are persisted with a unique `Idempotency-Key`. Event creation records business state, publish intent, and the idempotency record atomically; the publisher sends compact delivery commands and the worker claims and delivers them asynchronously. Concurrent-request and duplicate-message hardening, authentication, HMAC signing, and observability remain later-phase behavior.
 
 ## Current domain persistence
 
@@ -25,13 +25,15 @@ The append-only V3 migration adds `claim_token` and `claimed_at` to `deliveries`
 
 The append-only V4 migration adds `run_attempt_count` and retry-state coherence to `deliveries`. `attempt_count` is the monotonic lifetime count used to number the complete attempt history; `run_attempt_count` counts attempts since the latest manual replay and is reset only by replay. Both counters are non-negative, and the run count cannot exceed the lifetime count. `RETRY_SCHEDULED` requires a non-null `next_retry_at`; every other delivery status requires it to be null. These constraints keep retry and replay state durable and mutually coherent.
 
+The append-only V5 migration adds `event_idempotency_keys`. Each row stores the opaque key, a SHA-256 hash of the canonical supported event request, the created event reference, and the original response JSON. The key is unique, so sequential reuse can return the same logical event and response without creating duplicate events, deliveries, or outbox commands; a hash mismatch is reported as `IDEMPOTENCY_KEY_CONFLICT`.
+
 ## Implemented event flow
 
 ```text
 API request
     |
     v
-PostgreSQL transaction: Event + Delivery + OutboxEvent
+PostgreSQL transaction: Event + Delivery + OutboxEvent + IdempotencyKey (when supplied)
     |
     v
 Polling publisher -> Kafka delivery command -> worker

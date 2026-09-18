@@ -117,6 +117,17 @@ public class ApiExceptionHandler {
         );
     }
 
+    @ExceptionHandler(IdempotencyKeyConflictException.class)
+    ResponseEntity<ProblemDetail> handleIdempotencyKeyConflict() {
+        return response(
+                HttpStatus.CONFLICT,
+                "Idempotency key conflict",
+                "The Idempotency-Key was already used with a different request.",
+                "IDEMPOTENCY_KEY_CONFLICT",
+                Map.of()
+        );
+    }
+
     @ExceptionHandler(EndpointNotFoundException.class)
     ResponseEntity<ProblemDetail> handleEndpointNotFound() {
         return response(

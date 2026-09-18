@@ -8,6 +8,7 @@ import com.kemselcuk.webhook.domain.OutboxStatus;
 import com.kemselcuk.webhook.domain.WebhookEndpoint;
 import com.kemselcuk.webhook.domain.repository.DeliveryRepository;
 import com.kemselcuk.webhook.domain.repository.EventRepository;
+import com.kemselcuk.webhook.domain.repository.EventIdempotencyKeyRepository;
 import com.kemselcuk.webhook.domain.repository.OutboxEventRepository;
 import com.kemselcuk.webhook.domain.repository.WebhookEndpointRepository;
 import com.kemselcuk.webhook.event.api.CreateEventRequest;
@@ -79,6 +80,9 @@ class WebhookApiIT {
     private EventRepository eventRepository;
 
     @Autowired
+    private EventIdempotencyKeyRepository idempotencyKeyRepository;
+
+    @Autowired
     private DeliveryRepository deliveryRepository;
 
     @Autowired
@@ -92,6 +96,7 @@ class WebhookApiIT {
 
     @BeforeEach
     void clearDatabase() {
+        idempotencyKeyRepository.deleteAllInBatch();
         outboxEventRepository.deleteAllInBatch();
         deliveryRepository.deleteAllInBatch();
         eventRepository.deleteAllInBatch();
@@ -261,6 +266,70 @@ class WebhookApiIT {
     }
 
     @Test
+    void reusesIdempotencyKeyForCanonicalEquivalentRequestWithoutCreatingDuplicates() throws Exception {
+        JsonNode orders = createEndpoint("Orders", "https://orders.test/hooks");
+        JsonNode payments = createEndpoint("Payments", "https://payments.test/hooks");
+        String ordersId = orders.get("id").asText();
+        String paymentsId = payments.get("id").asText();
+
+        ResponseEntity<JsonNode> first = postWithKey(
+                "/api/events",
+                "event-submit-1",
+                """
+                {"type":" order.created ","payload":{"b":2.0,"a":1},"endpointIds":["%s","%s"]}
+                """.formatted(ordersId, paymentsId)
+        );
+        ResponseEntity<JsonNode> second = postWithKey(
+                "/api/events",
+                "event-submit-1",
+                """
+                {"endpointIds":["%s","%s"],"payload":{"a":1.0,"b":2},"type":"order.created"}
+                """.formatted(paymentsId, ordersId)
+        );
+
+        assertThat(first.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        assertThat(second.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        assertThat(second.getHeaders().getLocation()).isEqualTo(first.getHeaders().getLocation());
+        assertThat(second.getBody()).isEqualTo(first.getBody());
+        assertThat(eventRepository.count()).isEqualTo(1);
+        assertThat(deliveryRepository.count()).isEqualTo(2);
+        assertThat(outboxEventRepository.count()).isEqualTo(2);
+        assertThat(idempotencyKeyRepository.count()).isEqualTo(1);
+    }
+
+    @Test
+    void rejectsIdempotencyKeyReuseWithDifferentRequestAndLeavesStoredRowsUntouched() throws Exception {
+        JsonNode orders = createEndpoint("Orders", "https://orders.test/hooks");
+        String endpointId = orders.get("id").asText();
+        String key = "event-submit-conflict";
+
+        ResponseEntity<JsonNode> first = postWithKey(
+                "/api/events",
+                key,
+                """
+                {"type":"order.created","payload":{"orderId":"order-123"},"endpointIds":["%s"]}
+                """.formatted(endpointId)
+        );
+        ResponseEntity<JsonNode> second = postWithKey(
+                "/api/events",
+                key,
+                """
+                {"type":"order.created","payload":{"orderId":"order-456"},"endpointIds":["%s"]}
+                """.formatted(endpointId)
+        );
+
+        assertThat(first.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        assertThat(second.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+        assertThat(second.getHeaders().getContentType()).isEqualTo(MediaType.APPLICATION_PROBLEM_JSON);
+        assertThat(second.getBody()).isNotNull();
+        assertThat(second.getBody().get("code").asText()).isEqualTo("IDEMPOTENCY_KEY_CONFLICT");
+        assertThat(eventRepository.count()).isEqualTo(1);
+        assertThat(deliveryRepository.count()).isEqualTo(1);
+        assertThat(outboxEventRepository.count()).isEqualTo(1);
+        assertThat(idempotencyKeyRepository.count()).isEqualTo(1);
+    }
+
+    @Test
     void outboxInsertFailureRollsBackEventAndDeliveries() throws Exception {
         WebhookEndpoint endpoint = endpointRepository.saveAndFlush(
                 WebhookEndpoint.create("Orders", "https://orders.test/hooks")
@@ -385,8 +454,15 @@ class WebhookApiIT {
     }
 
     private ResponseEntity<JsonNode> post(String path, String body) {
+        return postWithKey(path, null, body);
+    }
+
+    private ResponseEntity<JsonNode> postWithKey(String path, String idempotencyKey, String body) {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
+        if (idempotencyKey != null) {
+            headers.set("Idempotency-Key", idempotencyKey);
+        }
         return restTemplate.exchange(
                 url(path),
                 HttpMethod.POST,
