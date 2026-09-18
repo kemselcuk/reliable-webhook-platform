@@ -4,7 +4,7 @@
 
 The platform is a small, fully local webhook delivery system. PostgreSQL is authoritative for business state; Kafka provides asynchronous transport, buffering, and horizontal consumption. A React UI exercises the real HTTP API and shows operational state without becoming a second source of truth.
 
-Phase 4 includes the PostgreSQL persistence foundation, REST/browser event flow, transactional outbox, Kafka publisher, bounded delivery worker, durable retry policy, due-retry requeueing, and manual replay. Event creation records business state and publish intent atomically; the publisher sends compact delivery commands and the worker claims and delivers them asynchronously. API idempotency, authentication, HMAC signing, and observability remain later-phase behavior.
+Phase 5 includes the PostgreSQL persistence foundation, REST/browser event flow, transactional outbox, Kafka publisher, bounded delivery worker, durable retry policy, due-retry requeueing, manual replay, API idempotency, and concurrency hardening. A canonical request hash and stored response reference are persisted with a unique `Idempotency-Key`. Event creation records business state, publish intent, and the idempotency record atomically; the publisher sends compact delivery commands and the worker claims and delivers them asynchronously. Authentication, HMAC signing, and observability remain later-phase behavior.
 
 ## Current domain persistence
 
@@ -25,13 +25,15 @@ The append-only V3 migration adds `claim_token` and `claimed_at` to `deliveries`
 
 The append-only V4 migration adds `run_attempt_count` and retry-state coherence to `deliveries`. `attempt_count` is the monotonic lifetime count used to number the complete attempt history; `run_attempt_count` counts attempts since the latest manual replay and is reset only by replay. Both counters are non-negative, and the run count cannot exceed the lifetime count. `RETRY_SCHEDULED` requires a non-null `next_retry_at`; every other delivery status requires it to be null. These constraints keep retry and replay state durable and mutually coherent.
 
+The append-only V5 migration adds `event_idempotency_keys`. Each row stores the opaque key, a SHA-256 hash of the canonical supported event request, the created event reference, and the original response JSON. The key is unique. Event creation also takes a transaction-scoped PostgreSQL advisory lock derived from the normalized key before its read/create decision, so concurrent identical requests serialize across application instances and return the same logical event and response without duplicate events, deliveries, or outbox commands. A hash mismatch, including a concurrently competing payload, is reported as `IDEMPOTENCY_KEY_CONFLICT`. Advisory-hash collisions can only serialize otherwise unrelated keys temporarily; the database constraint remains the final integrity guard.
+
 ## Implemented event flow
 
 ```text
 API request
     |
     v
-PostgreSQL transaction: Event + Delivery + OutboxEvent
+PostgreSQL transaction: Event + Delivery + OutboxEvent + IdempotencyKey (when supplied)
     |
     v
 Polling publisher -> Kafka delivery command -> worker
@@ -80,7 +82,7 @@ Manual replay locks the delivery and endpoint row, accepts only enabled `FAILED`
 
 ## Worker claiming and crash recovery
 
-Phase 3 worker claiming is lease/token based. A claim records an owner token and claim time; completing or failing work verifies the token so a worker that outlives its lease cannot overwrite a newer worker's state. A worker crash or lost heartbeat allows a later worker to recover an expired claim. A duplicate command for a `SUCCESS` or other terminal delivery is read as terminal and does not trigger another HTTP request. Retry and replay transitions also clear lease fields defensively before new work is published.
+Worker claiming is lease/token based. A single atomic PostgreSQL update permits only one concurrent worker to move an eligible delivery to `PROCESSING`; another worker observes the fresh lease as busy and does not make an HTTP request. A claim records an owner token and claim time; completing or failing work verifies the token so a worker that outlives its lease cannot overwrite a newer worker's state. A worker crash allows a later worker to recover an expired claim. A duplicate command for a `SUCCESS` or other terminal delivery is acknowledged without another HTTP request or attempt record. Retry and replay transitions also clear lease fields defensively before new work is published.
 
 The external HTTP call must not run while a database transaction or row lock is held open. Claiming and completion are short database operations around the external call: acquire a lease, release the transaction, perform HTTP, then persist the result only if the lease token is still valid. The worker sends the JSONB-derived payload as `application/json` (semantic JSON is preserved, but source whitespace/key byte order is not promised) with `Accept: application/json` and stable `X-Webhook-Id` (event UUID), `X-Delivery-Id`, and `X-Webhook-Event` headers. Connect/response timeouts and worker concurrency are bounded by `webhook.delivery.worker`; response bodies are not retained or logged.
 

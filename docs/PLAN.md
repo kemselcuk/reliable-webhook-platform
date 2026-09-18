@@ -21,10 +21,10 @@ The polling publisher may publish a Kafka record and crash before marking its ou
 
 ## Current status
 
-- Current phase: Phase 4 — Reliable retry `[x]` completed; awaiting the next explicit phase direction
-- Overall status: Phases 0–4 `[x]` completed and merged to `main` at `3069c34`; main CI run `35338206471` is green
-- Completed: atomic persistence/outbox publishing; crash-safe delivery leases; bounded HTTP delivery; manual-ack Kafka consumption; durable failure classification and retry state; exponential backoff with jitter and `Retry-After`; outbox-based due-retry requeueing; `DEAD` transition; atomic manual replay; and PostgreSQL/Kafka/WireMock failure-path coverage
-- Next: report the Phase 4 boundary to the user, then wait for authorization before Phase 5
+- Current phase: Phase 5 — Idempotency + concurrency safety `[x]` completed on `feature/phase-5-idempotency-concurrency`; pending feature push, merge, and green `main` CI verification
+- Overall status: Phases 0–4 `[x]` completed and merged to `main`; Phase 5 implementation and full local verification are complete on the feature branch
+- Completed: atomic persistence/outbox publishing; crash-safe delivery leases; bounded HTTP delivery; manual-ack Kafka consumption; durable retries and replay; API idempotency with canonical hashing and transaction-scoped per-key serialization; atomic concurrent worker claims; and duplicate Kafka command suppression after terminal completion
+- Next: push the completed Phase 5 feature, verify feature CI, merge to `main`, verify `main` CI, and stop at the phase boundary
 - Environment note: local port `5432` was already occupied during final verification, so the full stack was successfully verified with the documented host-port overrides (`55432/59092/18080/13000`). This does not change container ports or application topology.
 - Intentionally deferred: CDC/Debezium, multi-tenancy, full secret rotation, OpenTelemetry, hosted deployment, and business-state use of a Kafka DLQ
 
@@ -122,20 +122,20 @@ Acceptance criteria:
 - [x] Timeouts retry; permanent failures do not retry unnecessarily
 - [x] Max attempts result in `DEAD`; manual replay works
 
-## Phase 5 — Idempotency + concurrency safety `[ ]`
+## Phase 5 — Idempotency + concurrency safety `[x]`
 
 Features and tasks:
 
-- [ ] Implement API `Idempotency-Key`, canonical request hash, stored response reference, and unique constraint
-- [ ] Reject reuse of a key with a different payload
-- [ ] Harden atomic delivery claiming and duplicate Kafka message handling
-- [ ] Add concurrent request and worker tests
+- [x] Implement API `Idempotency-Key`, canonical request hash, stored response reference, and unique constraint
+- [x] Reject reuse of a key with a different payload
+- [x] Harden atomic delivery claiming and duplicate Kafka message handling
+- [x] Add concurrent request and worker tests
 
 Acceptance criteria:
 
-- [ ] Concurrent identical keys create one logical event and return a consistent result
-- [ ] Concurrent workers cannot actively process the same delivery
-- [ ] Duplicate Kafka messages do not corrupt or repeat completed work
+- [x] Concurrent identical keys create one logical event and return a consistent result
+- [x] Concurrent workers cannot actively process the same delivery
+- [x] Duplicate Kafka messages do not corrupt or repeat completed work
 
 ## Phase 6 — HMAC security `[ ]`
 
@@ -218,6 +218,14 @@ Acceptance criteria:
 
 `Trade-off: the schema has one additional counter and coherence invariant, which makes state transitions slightly more explicit while preserving auditability.`
 
+`Planned: the unique idempotency-key constraint would prevent duplicate stored records while API requests checked for an existing key before creating event state.`
+
+`Implemented: event creation takes a PostgreSQL transaction-scoped advisory lock derived from the normalized Idempotency-Key before checking or creating its stored result; the unique constraint remains the final integrity guard.`
+
+`Reason: a unique constraint alone rolls back the losing transaction but cannot make concurrent identical requests return the same successful response. Per-key serialization works across application instances and keeps event, delivery, outbox, and response persistence atomic.`
+
+`Trade-off: requests sharing a key wait for the current key owner, and the 64-bit PostgreSQL hash can very rarely serialize unrelated colliding keys; collisions affect throughput only, not correctness.`
+
 Record future material changes as: `Planned`, `Implemented`, `Reason`, and `Trade-off`.
 
 ## Environment notes
@@ -230,3 +238,4 @@ Record future material changes as: `Planned`, `Implemented`, `Reason`, and `Trad
 - Phase 2 final verification used the separate `rwp-phase2-verify` Compose project with fresh volumes and host ports `56432/59095/18083/13003`. Normal publication and a live Kafka stop/start were exercised: the outage row remained durable as `PENDING/TIMEOUT`, recovered to `PUBLISHED`, and duplicate Kafka commands were observed as permitted by the documented at-least-once boundary.
 - Phase 3 final verification used the separate `rwp-phase3-verify` Compose project with fresh volumes and host ports `57432/59096/18084/13004`, plus a temporary local receiver on `18091`. A real API event reached the receiver once with stable headers; PostgreSQL showed `SUCCESS`, one HTTP `204` attempt, and a `PUBLISHED` outbox row. Backend verification passed 18 unit and 29 integration tests; frontend lint, typecheck, 6 tests, production build, and Compose validation passed.
 - Phase 4 acceptance verification passed backend `./mvnw verify` with 41 unit tests and 46 integration tests, including the real PostgreSQL + Kafka + WireMock retry pipeline; frontend lint, typecheck, 6 tests, and production build passed; `docker compose config` passed. Feature and `main` CI are green, and the phase is merged to `main` at `3069c34`.
+- Phase 5 local acceptance verification passed backend `./mvnw verify` with 43 unit tests and 51 integration tests, including concurrent API requests, concurrent PostgreSQL-backed workers, and the duplicate Kafka command pipeline; frontend lint, typecheck, 6 tests, and production build passed; `docker compose config --quiet` and `git diff --check` passed.
