@@ -4,7 +4,7 @@
 
 The platform is a small, fully local webhook delivery system. PostgreSQL is authoritative for business state; Kafka provides asynchronous transport, buffering, and horizontal consumption. A React UI exercises the real HTTP API and shows operational state without becoming a second source of truth.
 
-Phase 3 includes the PostgreSQL persistence foundation, REST/browser event flow, transactional outbox, Kafka publisher, and bounded delivery worker. Event creation records business state and publish intent atomically; the publisher sends compact delivery commands and the worker claims and delivers them asynchronously. Business retries, authentication, and signing remain later-phase behavior.
+Phase 4 includes the PostgreSQL persistence foundation, REST/browser event flow, transactional outbox, Kafka publisher, bounded delivery worker, durable retry policy, due-retry requeueing, and manual replay. Event creation records business state and publish intent atomically; the publisher sends compact delivery commands and the worker claims and delivers them asynchronously. API idempotency, authentication, HMAC signing, and observability remain later-phase behavior.
 
 ## Current domain persistence
 
@@ -22,6 +22,8 @@ Foreign keys and check constraints protect relationships, enum-compatible status
 The append-only V2 migration adds `outbox_events`. Each row references a delivery and stores the compact JSONB command, availability time, `PENDING`/`CLAIMED`/`PUBLISHED` state, claim token/timestamp, publish-attempt count, bounded failure category, and audit timestamps. Check constraints enforce coherent lease/published fields, while partial indexes support due work and stale-claim scans.
 
 The append-only V3 migration adds `claim_token` and `claimed_at` to `deliveries`. A check requires both lease fields for `PROCESSING` and neither field for every other status; a partial `(claimed_at, id)` index supports stale `PROCESSING` claims. Delivery claim and completion transitions are token guarded; a stale worker can neither change state nor insert an attempt after its lease has been reclaimed.
+
+The append-only V4 migration adds `run_attempt_count` and retry-state coherence to `deliveries`. `attempt_count` is the monotonic lifetime count used to number the complete attempt history; `run_attempt_count` counts attempts since the latest manual replay and is reset only by replay. Both counters are non-negative, and the run count cannot exceed the lifetime count. `RETRY_SCHEDULED` requires a non-null `next_retry_at`; every other delivery status requires it to be null. These constraints keep retry and replay state durable and mutually coherent.
 
 ## Implemented event flow
 
@@ -44,7 +46,7 @@ Polling publisher -> Kafka delivery command -> worker
                      attempt + state transition in PostgreSQL
 ```
 
-Creating an event now persists the event, deliveries, and one outbox command per delivery in one database transaction. The polling publisher moves compact, versioned delivery references to Kafka. The Phase 3 worker validates the command and key, loads current state from PostgreSQL, claims eligible delivery work safely, performs bounded-concurrency HTTP delivery, and persists token-guarded attempts and state transitions.
+Creating an event now persists the event, deliveries, and one outbox command per delivery in one database transaction. The polling publisher moves compact, versioned delivery references to Kafka. The Phase 4 worker validates the command and key, loads current state from PostgreSQL, claims eligible delivery work safely, performs bounded-concurrency HTTP delivery, and persists token-guarded attempts and state transitions.
 
 ## Durability and delivery semantics
 
@@ -58,15 +60,29 @@ The listener uses String deserializers, manual-immediate acknowledgments, and th
 
 External HTTP cannot participate in the PostgreSQL transaction. The implemented guarantee is at-least-once delivery: a receiver may observe a request again around worker or network failures. Stable event and delivery identifiers and idempotency guidance help receivers handle that contract; HMAC signing is deferred to Phase 6. Exactly-once delivery is not claimed.
 
+## Retry state and failure classification
+
+The worker records one bounded attempt for every completed HTTP or transport exchange. `2xx` is `SUCCESS`. `429`, `500`–`599`, and transport failures are retryable; retryable failures below the configured maximum become `RETRY_SCHEDULED` with `next_retry_at`, while the maximum attempt becomes `DEAD`. Other non-2xx responses, including redirects and other `4xx` responses, are permanent `FAILED` outcomes. A retry decision carries only a bounded error code such as `HTTP_503` or `TIMEOUT`; response bodies and sensitive headers are not persisted or logged.
+
+The default retry policy uses five attempts, exponential initial delay `PT1S`, maximum delay `PT1H`, and jitter factor `0.20`. Jitter is injectable for deterministic tests. A valid `Retry-After` delta-seconds value or RFC 1123 HTTP-date acts as a minimum delay and is capped by the configured maximum. Invalid, negative, or past metadata falls back to exponential backoff. See [RFC 9110 §10.2.3](https://www.rfc-editor.org/rfc/rfc9110.html#section-10.2.3) for the HTTP semantics.
+
+The retry scheduler selects due `RETRY_SCHEDULED` deliveries for enabled endpoints with `FOR UPDATE SKIP LOCKED`, ordered by `next_retry_at` and ID. In one PostgreSQL transaction it changes each row to `PENDING`, clears `next_retry_at`, and inserts a fresh `PENDING` `DELIVERY_REQUESTED` outbox command. It never calls Kafka directly, so a Kafka outage cannot lose retry intent or create a database/Kafka dual-write window.
+
+The durable status meanings are:
+
+- `SUCCESS`: the latest completed delivery attempt returned `2xx`;
+- `RETRY_SCHEDULED`: a retryable failure is waiting for `next_retry_at`;
+- `FAILED`: a permanent failure completed, or a delivery is eligible for manual replay;
+- `DEAD`: the retry budget was exhausted and the delivery requires manual replay;
+- `PENDING`/`PROCESSING`: queued or actively claimed work.
+
+Manual replay locks the delivery and endpoint row, accepts only enabled `FAILED` or `DEAD` deliveries, changes the delivery to `PENDING`, clears retry/lease state, resets `run_attempt_count`, preserves lifetime `attempt_count` and every existing `delivery_attempts` row, and inserts one new outbox command in the same transaction. Concurrent replay requests therefore produce at most one accepted transition/outbox command.
+
 ## Worker claiming and crash recovery
 
-Phase 3 worker claiming is lease/token based. A claim records an owner token and claim time; completing or failing work verifies the token so a worker that outlives its lease cannot overwrite a newer worker's state. A worker crash or lost heartbeat allows a later worker to recover an expired claim. A duplicate command for a `SUCCESS` or other terminal delivery is read as terminal and does not trigger another HTTP request.
+Phase 3 worker claiming is lease/token based. A claim records an owner token and claim time; completing or failing work verifies the token so a worker that outlives its lease cannot overwrite a newer worker's state. A worker crash or lost heartbeat allows a later worker to recover an expired claim. A duplicate command for a `SUCCESS` or other terminal delivery is read as terminal and does not trigger another HTTP request. Retry and replay transitions also clear lease fields defensively before new work is published.
 
 The external HTTP call must not run while a database transaction or row lock is held open. Claiming and completion are short database operations around the external call: acquire a lease, release the transaction, perform HTTP, then persist the result only if the lease token is still valid. The worker sends the JSONB-derived payload as `application/json` (semantic JSON is preserved, but source whitespace/key byte order is not promised) with `Accept: application/json` and stable `X-Webhook-Id` (event UUID), `X-Delivery-Id`, and `X-Webhook-Event` headers. Connect/response timeouts and worker concurrency are bounded by `webhook.delivery.worker`; response bodies are not retained or logged.
-
-## Retry and failure direction
-
-Phase 3 records 2xx as `SUCCESS`; non-2xx responses and transport failures become `FAILED` with a bounded attempt outcome/error category. Failed deliveries do not retry automatically yet. Phase 4 will classify retryable outcomes, persist retry scheduling in PostgreSQL, re-enter due retries through the outbox, and add backoff, jitter, maximum attempts, and replay. No worker path uses `Thread.sleep` or memory-only retry state.
 
 ## Operational boundaries
 
@@ -90,8 +106,8 @@ Compose defines four services for the local topology:
 - the Spring Boot backend, built as a non-root Java runtime image;
 - the React build served by an unprivileged nginx image, proxying `/api` to the backend.
 
-The backend and frontend health checks use readiness/HTTP endpoints. Compose dependencies wait for infrastructure and backend health. The Phase 3 backend connects to PostgreSQL and Kafka, runs Flyway, and starts both the outbox polling publisher and delivery worker after the broker is healthy in Compose. Compose enables the worker; a host-run backend must set `WEBHOOK_DELIVERY_WORKER_ENABLED=true`.
+The backend and frontend health checks use readiness/HTTP endpoints. Compose dependencies wait for infrastructure and backend health. The Phase 4 backend connects to PostgreSQL and Kafka, runs Flyway, and starts the outbox polling publisher, delivery worker, and durable retry scheduler after the broker is healthy in Compose. Compose enables all three; a host-run backend must set `WEBHOOK_DELIVERY_WORKER_ENABLED=true` and `WEBHOOK_DELIVERY_RETRY_SCHEDULER_ENABLED=true` when retry processing is desired.
 
 ## Phase boundaries
 
-Phase 1 introduces domain records, versioned migrations, and basic endpoint/event APIs. Phase 2 adds the transactional outbox and publisher. Phase 3 adds Kafka commands, lease-based workers, bounded external delivery, and the complete asynchronous integration flow. Phase 4 adds reliable retries; Phase 5 adds idempotency/concurrency hardening; Phase 6 adds HMAC security; and Phase 7 adds observability. Phase 8 completes the UI and Phase 9 hardens the end-to-end demo.
+Phase 1 introduces domain records, versioned migrations, and basic endpoint/event APIs. Phase 2 adds the transactional outbox and publisher. Phase 3 adds Kafka commands, lease-based workers, bounded external delivery, and the complete asynchronous integration flow. Phase 4 adds reliable retries, durable requeueing, `DEAD`, and manual replay; Phase 5 adds API idempotency/concurrency hardening; Phase 6 adds HMAC security; and Phase 7 adds observability. Phase 8 completes the UI and Phase 9 hardens the end-to-end demo.

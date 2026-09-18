@@ -55,7 +55,7 @@ management:
 info:
   app:
     name: ${spring.application.name}
-    phase: 3
+    phase: 4
 
 webhook:
   delivery:

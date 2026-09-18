@@ -120,4 +120,4 @@ Do not treat an internally completed coding increment as a completed phase; the 
 
 ## Current recovery point
 
-At the latest update, Phases 0–3 are complete and Phase 4 has started on `feature/phase-4-reliable-retry`. The next implementation increment is durable failure classification and retry state, followed by outbox-based due-retry requeueing, `DEAD`, manual replay, and the Phase 4 failure-path acceptance tests. Re-read `docs/PLAN.md` and Git history for the exact branch and commit state; do not start Phase 5 before the Phase 4 boundary handoff.
+At the latest update, Phases 0–3 are complete and Phase 4 implementation and local acceptance are complete on `feature/phase-4-reliable-retry`. The full local verification is green; documentation closure is pending manager review, commit/push, merge to `main`, and green main CI. Do not claim merge/CI and do not start Phase 5 before the Phase 4 boundary handoff.

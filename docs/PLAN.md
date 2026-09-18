@@ -21,10 +21,10 @@ The polling publisher may publish a Kafka record and crash before marking its ou
 
 ## Current status
 
-- Current phase: Phase 4 — Reliable retry `[~]` in progress on `feature/phase-4-reliable-retry`
-- Overall status: Phases 0–3 `[x]` completed and merged to `main`; Phase 4 implementation has started
-- Completed: atomic persistence/outbox publishing; crash-safe delivery leases; bounded HTTP delivery; manual-ack Kafka consumption; PostgreSQL/WireMock transport tests; and the real PostgreSQL + Kafka + WireMock API-to-webhook pipeline with duplicate-command suppression
-- Next: implement durable failure classification and retry state, then add outbox-based retry scheduling, `DEAD`, manual replay, and failure-path acceptance tests
+- Current phase: Phase 4 — Reliable retry `[x]` implementation and local acceptance complete on `feature/phase-4-reliable-retry`; awaiting manager review, merge, and main CI
+- Overall status: Phases 0–3 `[x]` completed and merged to `main`; Phase 4 `[x]` complete on the feature branch but not yet merged
+- Completed: atomic persistence/outbox publishing; crash-safe delivery leases; bounded HTTP delivery; manual-ack Kafka consumption; durable failure classification and retry state; exponential backoff with jitter and `Retry-After`; outbox-based due-retry requeueing; `DEAD` transition; atomic manual replay; and PostgreSQL/Kafka/WireMock failure-path coverage
+- Next: manager review, commit/push, merge to `main`, verify green main CI, report the Phase 4 boundary to the user, then wait for authorization before Phase 5
 - Environment note: local port `5432` was already occupied during final verification, so the full stack was successfully verified with the documented host-port overrides (`55432/59092/18080/13000`). This does not change container ports or application topology.
 - Intentionally deferred: CDC/Debezium, multi-tenancy, full secret rotation, OpenTelemetry, hosted deployment, and business-state use of a Kafka DLQ
 
@@ -106,21 +106,21 @@ Acceptance criteria:
 - [x] A 2xx response results in `SUCCESS` with a recorded attempt
 - [x] A crashed worker's expired lease is recovered, and a stale worker cannot overwrite a newer claim
 
-## Phase 4 — Reliable retry `[~]`
+## Phase 4 — Reliable retry `[x]`
 
 Features and tasks:
 
-- [ ] Classify 2xx, 429/`Retry-After`, retryable 5xx/network failures, and permanent 4xx
-- [ ] Persist attempt count, next retry time, and status
-- [ ] Implement exponential backoff, jitter, max attempts, and injectable time/randomness
-- [ ] Requeue due retries through the transactional outbox
-- [ ] Implement `DEAD` transition and manual replay
+- [x] Classify 2xx, 429/`Retry-After`, retryable 5xx/network failures, and permanent 4xx
+- [x] Persist lifetime/run attempt counts, next retry time, and coherent status transitions
+- [x] Implement exponential backoff, jitter, max attempts, and injectable time/randomness
+- [x] Requeue due retries through the transactional outbox
+- [x] Implement `DEAD` transition and manual replay
 
 Acceptance criteria:
 
-- [ ] `500 → 500 → 200` reaches `SUCCESS` automatically
-- [ ] Timeouts retry; permanent failures do not retry unnecessarily
-- [ ] Max attempts result in `DEAD`; manual replay works
+- [x] `500 → 500 → 200` reaches `SUCCESS` automatically
+- [x] Timeouts retry; permanent failures do not retry unnecessarily
+- [x] Max attempts result in `DEAD`; manual replay works
 
 ## Phase 5 — Idempotency + concurrency safety `[ ]`
 
@@ -210,7 +210,13 @@ Acceptance criteria:
 
 ## Plan deviations / decision changes
 
-No material deviation from the supplied implementation plan has been made.
+`Planned: one attempt_count represented the delivery retry budget and attempt history.`
+
+`Implemented: deliveries keep a monotonic lifetime attempt_count for immutable attempt numbering and a resettable run_attempt_count for each replay run.`
+
+`Reason: manual replay needs a fresh maximum-attempt budget without renumbering or deleting the original delivery history.`
+
+`Trade-off: the schema has one additional counter and coherence invariant, which makes state transitions slightly more explicit while preserving auditability.`
 
 Record future material changes as: `Planned`, `Implemented`, `Reason`, and `Trade-off`.
 
@@ -223,3 +229,4 @@ Record future material changes as: `Planned`, `Implemented`, `Reason`, and `Trad
 - Phase 1 final verification used a separate Compose project and fresh named volumes to prove clean Flyway startup without deleting existing local data. The default project volume in this workspace contains an earlier, unpublished V1 migration draft from implementation and therefore correctly fails Flyway checksum validation until that development-only volume is intentionally recreated.
 - Phase 2 final verification used the separate `rwp-phase2-verify` Compose project with fresh volumes and host ports `56432/59095/18083/13003`. Normal publication and a live Kafka stop/start were exercised: the outage row remained durable as `PENDING/TIMEOUT`, recovered to `PUBLISHED`, and duplicate Kafka commands were observed as permitted by the documented at-least-once boundary.
 - Phase 3 final verification used the separate `rwp-phase3-verify` Compose project with fresh volumes and host ports `57432/59096/18084/13004`, plus a temporary local receiver on `18091`. A real API event reached the receiver once with stable headers; PostgreSQL showed `SUCCESS`, one HTTP `204` attempt, and a `PUBLISHED` outbox row. Backend verification passed 18 unit and 29 integration tests; frontend lint, typecheck, 6 tests, production build, and Compose validation passed.
+- Phase 4 local acceptance verification passed backend `./mvnw verify` with 41 unit tests and 46 integration tests, including the real PostgreSQL + Kafka + WireMock retry pipeline; frontend lint, typecheck, 6 tests, and production build passed; `docker compose config` passed. The feature branch is ready for manager review and main-branch CI, which are intentionally not claimed here.
