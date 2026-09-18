@@ -2,7 +2,7 @@
 
 Reliable Webhook Platform is a local-first Spring Boot and React workspace for exploring durable, asynchronous webhook delivery. The long-term design uses PostgreSQL as the source of truth and Apache Kafka as the transport between durable work state and delivery workers.
 
-Phase 3 currently provides the repository foundation, core PostgreSQL persistence, a transactional outbox publisher, and an asynchronous delivery worker:
+Phase 4 currently provides the repository foundation, durable retry processing, manual replay, and an asynchronous delivery worker:
 
 - a Java 21 / Spring Boot 3.5.16 backend;
 - a small React + TypeScript + Vite frontend;
@@ -16,10 +16,14 @@ Phase 3 currently provides the repository foundation, core PostgreSQL persistenc
 - a lease/token-based polling publisher that sends compact delivery commands to Kafka;
 - a lease/token-based delivery worker that claims work in PostgreSQL and sends bounded HTTP requests outside database transactions;
 - a manual-acknowledgment Kafka listener with duplicate-command state checks and bounded worker concurrency;
+- bounded failure classification for successful responses, permanent HTTP failures, retryable 429/5xx responses, and transport failures;
+- durable exponential backoff with configurable jitter, maximum attempts, and `Retry-After` support;
+- PostgreSQL retry state and a polling scheduler that requeues due deliveries through the transactional outbox;
+- `DEAD` transition after the retry budget is exhausted and an atomic manual replay API for terminal failures;
 - PostgreSQL, Kafka, and WireMock integration coverage for the complete asynchronous API-to-webhook flow;
 - a minimal browser workflow for endpoint registration/listing and event submission to selected endpoints.
 
-Business retry scheduling, HMAC signing, authentication, and metrics remain later-phase work. The current REST flow durably records publish intent, publishes a compact delivery reference to Kafka, and asynchronously sends the event payload to the configured webhook endpoint.
+API idempotency, HMAC signing, authentication, metrics, and the remaining delivery-detail UI are later-phase work. The current REST flow durably records publish intent, publishes a compact delivery reference to Kafka, and asynchronously sends the event payload to the configured webhook endpoint.
 
 ## Repository layout
 
@@ -103,7 +107,31 @@ The worker sends the JSONB-derived payload as `application/json` and requests JS
 - `X-Delivery-Id`: delivery UUID;
 - `X-Webhook-Event`: event type.
 
-HMAC signatures and a timestamp header are deferred to Phase 6. Non-2xx responses and bounded transport failures currently leave the delivery `FAILED` with a recorded attempt; automatic retry and backoff are deferred to Phase 4.
+HMAC signatures and a timestamp header are deferred to Phase 6. A `2xx` response becomes `SUCCESS`. `429`, `5xx`, and bounded transport failures are retryable; other non-2xx responses, including redirects and permanent `4xx` responses, become `FAILED` without unnecessary retry.
+
+### Durable retry and replay
+
+Retry state is authoritative in PostgreSQL. Each completed run increments the lifetime `attempt_count` and the current run's `run_attempt_count`; `RETRY_SCHEDULED` also stores `next_retry_at`. The default policy is five attempts, a one-second initial delay, a one-hour maximum delay, and multiplicative jitter of `0.20`:
+
+```text
+WEBHOOK_DELIVERY_RETRY_MAX_ATTEMPTS=5
+WEBHOOK_DELIVERY_RETRY_INITIAL_DELAY=PT1S
+WEBHOOK_DELIVERY_RETRY_MAX_DELAY=PT1H
+WEBHOOK_DELIVERY_RETRY_JITTER_FACTOR=0.20
+```
+
+Backoff is exponential and capped. A valid `Retry-After` delta-seconds value or RFC 1123 HTTP-date is used as a minimum delay and remains bounded by the configured maximum; malformed, negative, or past values fall back to policy backoff. The implementation follows [RFC 9110 Retry-After](https://www.rfc-editor.org/rfc/rfc9110.html#section-10.2.3). No retry uses `Thread.sleep` or memory-only scheduling.
+
+Compose enables the durable retry scheduler automatically. Its settings can be changed with `WEBHOOK_DELIVERY_RETRY_SCHEDULER_ENABLED`, `WEBHOOK_DELIVERY_RETRY_SCHEDULER_POLL_INTERVAL` (default `PT1S`), and `WEBHOOK_DELIVERY_RETRY_SCHEDULER_BATCH_SIZE` (default `50`). Due `RETRY_SCHEDULED` rows are atomically changed to `PENDING` and receive a fresh compact outbox command in the same PostgreSQL transaction; Kafka is never written directly by the scheduler.
+
+Only `FAILED` and `DEAD` deliveries whose endpoint remains enabled can be replayed:
+
+```bash
+curl -i -X POST \
+  http://localhost:8080/api/deliveries/<delivery-uuid>/replay
+```
+
+The response is `202 Accepted` with the delivery ID, `PENDING` status, lifetime attempt count, and reset current-run count. Replay preserves the delivery-attempt history and lifetime counter, resets only `run_attempt_count`, clears retry/lease state, and creates one new outbox command. A concurrent replay request receives a conflict rather than creating duplicate work.
 
 ### Full local Compose stack
 
@@ -112,7 +140,7 @@ docker compose up --build -d
 docker compose ps
 ```
 
-Open `http://localhost:3000`. From the UI, create an endpoint, select it in the event form, and submit the sample JSON payload. Phase 3 stores the event, delivery, and outbox intent, then publishes and consumes the compact command asynchronously. A successful webhook becomes `SUCCESS`; failed delivery currently remains `FAILED` until retry behavior is added in Phase 4.
+Open `http://localhost:3000`. From the UI, create an endpoint, select it in the event form, and submit the sample JSON payload. The platform stores the event, delivery, and outbox intent, then publishes and consumes the compact command asynchronously. A successful webhook becomes `SUCCESS`; retryable failures move through `RETRY_SCHEDULED` and back to `PENDING`, while exhausted retries become `DEAD`.
 
 Inspect recent outbox state:
 
@@ -125,7 +153,7 @@ Inspect delivery and attempt state:
 
 ```bash
 docker compose exec postgres psql -U webhook -d webhook -c \
-  "select id,event_id,webhook_endpoint_id,status,attempt_count,claim_token,claimed_at,updated_at from deliveries order by created_at desc limit 10;"
+  "select id,event_id,webhook_endpoint_id,status,attempt_count,run_attempt_count,next_retry_at,claim_token,claimed_at,updated_at from deliveries order by created_at desc limit 10;"
 docker compose exec postgres psql -U webhook -d webhook -c \
   "select delivery_id,attempt_number,outcome,http_status,error_code,started_at,completed_at from delivery_attempts order by completed_at desc limit 20;"
 ```
@@ -179,4 +207,4 @@ Use a focused `feature/`, `fix/`, `refactor/`, or `docs/` branch for meaningful 
 
 ## Current limitations
 
-Business retry scheduling/classification, HMAC signing, authentication, dashboarding, and hosted deployment are not implemented yet. The outbox and worker are both at-least-once: a crash around Kafka acknowledgement or external HTTP completion can produce duplicate commands or requests. Lease expiry and claim tokens prevent stale workers from overwriting newer state, and a duplicate command received after `SUCCESS` is terminal and does not resend the request. The worker uses manual-immediate acknowledgments, nacks fresh `PROCESSING` deliveries for delayed redelivery, and retries unexpected infrastructure errors with a bounded fixed delay and no finite recovery cutoff. HTTP connect/response timeouts and worker concurrency are bounded by `webhook.delivery.worker` properties.
+API idempotency (Phase 5), HMAC signing and authentication (Phase 6), Prometheus/Grafana observability (Phase 7), the remaining delivery-detail/replay UI (Phase 8), and hosted deployment remain later or intentionally deferred work. The outbox and worker are both at-least-once: a crash around Kafka acknowledgement or external HTTP completion can produce duplicate commands or requests. Lease expiry and claim tokens prevent stale workers from overwriting newer state, and a duplicate command received after `SUCCESS` is terminal and does not resend the request. HTTP connect/response timeouts and worker concurrency are bounded by `webhook.delivery.worker` properties.

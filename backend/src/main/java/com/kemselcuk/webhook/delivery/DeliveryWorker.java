@@ -1,7 +1,5 @@
 package com.kemselcuk.webhook.delivery;
 
-import com.kemselcuk.webhook.domain.DeliveryAttemptOutcome;
-import com.kemselcuk.webhook.domain.DeliveryStatus;
 import org.springframework.stereotype.Service;
 
 import java.time.Clock;
@@ -19,20 +17,20 @@ public class DeliveryWorker {
     private final DeliveryClaimStore claimStore;
     private final DeliveryHttpClient httpClient;
     private final DeliveryWorkerProperties properties;
-    private final DeliveryOutcomeClassifier outcomeClassifier;
+    private final DeliveryRetryPolicy retryPolicy;
     private final Clock clock;
 
     public DeliveryWorker(
             DeliveryClaimStore claimStore,
             DeliveryHttpClient httpClient,
             DeliveryWorkerProperties properties,
-            DeliveryOutcomeClassifier outcomeClassifier,
+            DeliveryRetryPolicy retryPolicy,
             Clock clock
     ) {
         this.claimStore = Objects.requireNonNull(claimStore, "claimStore");
         this.httpClient = Objects.requireNonNull(httpClient, "httpClient");
         this.properties = Objects.requireNonNull(properties, "properties");
-        this.outcomeClassifier = Objects.requireNonNull(outcomeClassifier, "outcomeClassifier");
+        this.retryPolicy = Objects.requireNonNull(retryPolicy, "retryPolicy");
         this.clock = Objects.requireNonNull(clock, "clock");
     }
 
@@ -64,18 +62,20 @@ public class DeliveryWorker {
             return processHttpResult(work, httpResult, startedAt, completedAt);
         }
         DeliveryTransportFailure transportFailure = httpResult.transportFailure();
+        DeliveryRetryDecision decision = retryPolicy.decide(
+                httpResult, work.currentRunAttemptNumber(), completedAt
+        );
         boolean completed = claimStore.completeFailure(
                 work,
-                DeliveryAttemptOutcome.RETRYABLE_FAILURE,
+                decision,
                 null,
-                transportFailure.name(),
                 startedAt,
                 completedAt
         );
         if (!completed) {
             return DeliveryWorkerResult.staleCompletion(null, transportFailure);
         }
-        return DeliveryWorkerResult.failed(DeliveryStatus.FAILED, null, transportFailure);
+        return DeliveryWorkerResult.failed(decision.targetStatus(), null, transportFailure);
     }
 
     private DeliveryWorkerResult processHttpResult(
@@ -94,18 +94,19 @@ public class DeliveryWorker {
                     : DeliveryWorkerResult.staleCompletion(httpStatus, null);
         }
 
-        DeliveryAttemptOutcome outcome = outcomeClassifier.classify(httpStatus);
+        DeliveryRetryDecision decision = retryPolicy.decide(
+                httpResult, work.currentRunAttemptNumber(), completedAt
+        );
         boolean completed = claimStore.completeFailure(
                 work,
-                outcome,
+                decision,
                 httpStatus,
-                "HTTP_" + httpStatus,
                 startedAt,
                 completedAt
         );
         if (!completed) {
             return DeliveryWorkerResult.staleCompletion(httpStatus, null);
         }
-        return DeliveryWorkerResult.failed(DeliveryStatus.FAILED, httpStatus, null);
+        return DeliveryWorkerResult.failed(decision.targetStatus(), httpStatus, null);
     }
 }

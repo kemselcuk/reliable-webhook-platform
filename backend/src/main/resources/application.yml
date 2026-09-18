@@ -55,7 +55,7 @@ management:
 info:
   app:
     name: ${spring.application.name}
-    phase: 3
+    phase: 4
 
 webhook:
   delivery:
@@ -67,6 +67,15 @@ webhook:
       concurrency: ${WEBHOOK_DELIVERY_WORKER_CONCURRENCY:3}
       group-id: ${WEBHOOK_DELIVERY_WORKER_GROUP_ID:webhook-delivery-workers-v1}
       busy-redelivery-delay: ${WEBHOOK_DELIVERY_WORKER_BUSY_REDELIVERY_DELAY:PT0.5S}
+    retry:
+      max-attempts: ${WEBHOOK_DELIVERY_RETRY_MAX_ATTEMPTS:5}
+      initial-delay: ${WEBHOOK_DELIVERY_RETRY_INITIAL_DELAY:PT1S}
+      max-delay: ${WEBHOOK_DELIVERY_RETRY_MAX_DELAY:PT1H}
+      jitter-factor: ${WEBHOOK_DELIVERY_RETRY_JITTER_FACTOR:0.20}
+      scheduler:
+        enabled: ${WEBHOOK_DELIVERY_RETRY_SCHEDULER_ENABLED:false}
+        poll-interval: ${WEBHOOK_DELIVERY_RETRY_SCHEDULER_POLL_INTERVAL:PT1S}
+        batch-size: ${WEBHOOK_DELIVERY_RETRY_SCHEDULER_BATCH_SIZE:50}
   outbox:
     publisher:
       enabled: ${WEBHOOK_OUTBOX_PUBLISHER_ENABLED:true}

@@ -151,6 +151,7 @@ class DeliveryClaimStoreIT {
         assertThat(replacement.work().claimToken())
                 .isNotEqualTo(first.work().claimToken());
         assertThat(replacement.work().nextAttemptNumber()).isEqualTo(1);
+        assertThat(replacement.work().currentRunAttemptNumber()).isEqualTo(1);
     }
 
     @Test
@@ -195,20 +196,22 @@ class DeliveryClaimStoreIT {
         DeliveryClaimResult claim = claimStore.claim(delivery.getId(), FIRST_CLAIM_AT, CLAIM_TIMEOUT);
         Instant startedAt = FIRST_CLAIM_AT.plusSeconds(1);
         Instant completedAt = startedAt.plusSeconds(3);
+        Instant nextRetryAt = completedAt.plusSeconds(60);
 
         assertThat(claimStore.completeFailure(
                 claim.work(),
-                DeliveryAttemptOutcome.RETRYABLE_FAILURE,
+                DeliveryRetryDecision.scheduled(nextRetryAt, "UPSTREAM_TIMEOUT"),
                 503,
-                "UPSTREAM_TIMEOUT",
                 startedAt,
                 completedAt
         )).isTrue();
 
         assertThat(jdbcTemplate.queryForMap(
-                "SELECT status, claim_token, claimed_at, attempt_count FROM deliveries WHERE id = ?",
+                "SELECT status, next_retry_at, claim_token, claimed_at, attempt_count "
+                        + "FROM deliveries WHERE id = ?",
                 delivery.getId()
-        )).containsEntry("status", "FAILED")
+        )).containsEntry("status", "RETRY_SCHEDULED")
+                .containsEntry("next_retry_at", java.sql.Timestamp.from(nextRetryAt))
                 .containsEntry("claim_token", null)
                 .containsEntry("claimed_at", null)
                 .containsEntry("attempt_count", 1);
@@ -232,15 +235,93 @@ class DeliveryClaimStoreIT {
 
         assertThat(claimStore.completeFailure(
                 claim.work(),
-                DeliveryAttemptOutcome.RETRYABLE_FAILURE,
+                DeliveryRetryDecision.scheduled(completedAt.plusSeconds(60), "NETWORK_FAILURE"),
                 null,
-                "NETWORK_FAILURE",
                 startedAt,
                 completedAt
         )).isTrue();
         assertThat(attemptRepository.findByDeliveryIdOrderByAttemptNumberAsc(delivery.getId()))
                 .first()
                 .satisfies(attempt -> assertThat(attempt.getHttpStatus()).isNull());
+    }
+
+    @Test
+    void classifiedScheduledFailurePersistsRetryStateAndAttemptAtomically() {
+        Delivery delivery = seedDelivery(true);
+        DeliveryClaimResult claim = claimStore.claim(delivery.getId(), FIRST_CLAIM_AT, CLAIM_TIMEOUT);
+        Instant startedAt = FIRST_CLAIM_AT.plusSeconds(1);
+        Instant completedAt = startedAt.plusSeconds(3);
+        Instant nextRetryAt = FIRST_CLAIM_AT.plusSeconds(60);
+
+        assertThat(claimStore.completeFailure(
+                claim.work(),
+                DeliveryRetryDecision.scheduled(nextRetryAt, "HTTP_503"),
+                503,
+                startedAt,
+                completedAt
+        )).isTrue();
+
+        assertThat(jdbcTemplate.queryForMap(
+                "SELECT status, next_retry_at, claim_token, claimed_at, attempt_count, run_attempt_count "
+                        + "FROM deliveries WHERE id = ?",
+                delivery.getId()
+        )).containsEntry("status", "RETRY_SCHEDULED")
+                .containsEntry("next_retry_at", java.sql.Timestamp.from(nextRetryAt))
+                .containsEntry("claim_token", null)
+                .containsEntry("claimed_at", null)
+                .containsEntry("attempt_count", 1)
+                .containsEntry("run_attempt_count", 1);
+        assertThat(attemptRepository.findByDeliveryIdOrderByAttemptNumberAsc(delivery.getId()))
+                .singleElement()
+                .satisfies(attempt -> {
+                    assertThat(attempt.getAttemptNumber()).isEqualTo(1);
+                    assertThat(attempt.getOutcome()).isEqualTo(DeliveryAttemptOutcome.RETRYABLE_FAILURE);
+                    assertThat(attempt.getErrorCode()).isEqualTo("HTTP_503");
+                });
+    }
+
+    @Test
+    void classifiedDeadAndPermanentFailuresClearRetryTimeAndPersistCounts() {
+        Delivery deadDelivery = seedDelivery(true, "OrdersDead");
+        DeliveryClaimResult deadClaim = claimStore.claim(
+                deadDelivery.getId(), FIRST_CLAIM_AT, CLAIM_TIMEOUT
+        );
+        assertThat(claimStore.completeFailure(
+                deadClaim.work(),
+                DeliveryRetryDecision.dead("TIMEOUT"),
+                null,
+                FIRST_CLAIM_AT,
+                FIRST_CLAIM_AT.plusSeconds(1)
+        )).isTrue();
+
+        Delivery permanentDelivery = seedDelivery(true, "OrdersPermanent");
+        DeliveryClaimResult permanentClaim = claimStore.claim(
+                permanentDelivery.getId(), FIRST_CLAIM_AT, CLAIM_TIMEOUT
+        );
+        assertThat(claimStore.completeFailure(
+                permanentClaim.work(),
+                DeliveryRetryDecision.permanent("HTTP_404"),
+                404,
+                FIRST_CLAIM_AT,
+                FIRST_CLAIM_AT.plusSeconds(1)
+        )).isTrue();
+
+        assertThat(jdbcTemplate.queryForMap(
+                "SELECT status, next_retry_at, attempt_count, run_attempt_count "
+                        + "FROM deliveries WHERE id = ?",
+                deadDelivery.getId()
+        )).containsEntry("status", "DEAD")
+                .containsEntry("next_retry_at", null)
+                .containsEntry("attempt_count", 1)
+                .containsEntry("run_attempt_count", 1);
+        assertThat(jdbcTemplate.queryForMap(
+                "SELECT status, next_retry_at, attempt_count, run_attempt_count "
+                        + "FROM deliveries WHERE id = ?",
+                permanentDelivery.getId()
+        )).containsEntry("status", "FAILED")
+                .containsEntry("next_retry_at", null)
+                .containsEntry("attempt_count", 1)
+                .containsEntry("run_attempt_count", 1);
     }
 
     @Test
@@ -289,6 +370,24 @@ class DeliveryClaimStoreIT {
     }
 
     @Test
+    void migrationRejectsIncoherentRetryStateAndRunCount() {
+        Delivery delivery = seedDelivery(true);
+
+        assertThatThrownBy(() -> jdbcTemplate.update(
+                "UPDATE deliveries SET run_attempt_count = 1 WHERE id = ?", delivery.getId()
+        )).isInstanceOf(DataIntegrityViolationException.class);
+        assertThatThrownBy(() -> jdbcTemplate.update(
+                "UPDATE deliveries SET status = 'RETRY_SCHEDULED', next_retry_at = NULL WHERE id = ?",
+                delivery.getId()
+        )).isInstanceOf(DataIntegrityViolationException.class);
+        assertThatThrownBy(() -> jdbcTemplate.update(
+                "UPDATE deliveries SET next_retry_at = ? WHERE id = ?",
+                java.sql.Timestamp.from(FIRST_CLAIM_AT),
+                delivery.getId()
+        )).isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
     void claimReturnsBoundedDispositionForMissingAndIneligibleCommands() {
         UUID missingId = UUID.randomUUID();
         assertThat(claimStore.claim(missingId, FIRST_CLAIM_AT, CLAIM_TIMEOUT).disposition())
@@ -296,7 +395,9 @@ class DeliveryClaimStoreIT {
 
         Delivery delivery = seedDelivery(true);
         jdbcTemplate.update(
-                "UPDATE deliveries SET status = 'RETRY_SCHEDULED' WHERE id = ?", delivery.getId()
+                "UPDATE deliveries SET status = 'RETRY_SCHEDULED', next_retry_at = ? WHERE id = ?",
+                java.sql.Timestamp.from(FIRST_CLAIM_AT),
+                delivery.getId()
         );
         DeliveryClaimResult result = claimStore.claim(delivery.getId(), FIRST_CLAIM_AT, CLAIM_TIMEOUT);
         assertThat(result.disposition()).isEqualTo(DeliveryClaimDisposition.INELIGIBLE);
@@ -304,8 +405,12 @@ class DeliveryClaimStoreIT {
     }
 
     private Delivery seedDelivery(boolean enabled) {
+        return seedDelivery(enabled, "Orders");
+    }
+
+    private Delivery seedDelivery(boolean enabled, String name) {
         WebhookEndpoint endpoint = endpointRepository.saveAndFlush(
-                WebhookEndpoint.create("Orders", "https://orders.example.test/hooks")
+                WebhookEndpoint.create(name, "https://orders.example.test/hooks")
         );
         if (!enabled) {
             endpoint.disable();

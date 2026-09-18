@@ -69,7 +69,7 @@ public class DeliveryClaimStore {
                           OR (d.status = 'PROCESSING' AND d.claimed_at <= ?)
                       )
                     RETURNING d.id, d.event_id, d.webhook_endpoint_id,
-                              d.attempt_count, d.claim_token
+                              d.attempt_count, d.run_attempt_count, d.claim_token
                 )
                 SELECT claimed.id AS delivery_id,
                        claimed.event_id,
@@ -79,7 +79,8 @@ public class DeliveryClaimStore {
                        endpoint.url AS endpoint_url,
                        endpoint.enabled AS endpoint_enabled,
                        claimed.claim_token,
-                       claimed.attempt_count + 1 AS next_attempt_number
+                       claimed.attempt_count + 1 AS next_attempt_number,
+                       claimed.run_attempt_count + 1 AS current_run_attempt_number
                 FROM claimed
                 JOIN events event ON event.id = claimed.event_id
                 JOIN webhook_endpoints endpoint
@@ -138,60 +139,37 @@ public class DeliveryClaimStore {
                 DeliveryAttemptOutcome.SUCCESS,
                 httpStatus,
                 null,
+                null,
                 startedAt,
                 completedAt
         );
     }
 
     /**
-     * Complete a basic failure if this worker still owns the lease. Retry
-     * scheduling and outcome classification intentionally remain outside this
-     * persistence component.
+     * Complete a classified failure and persist its durable retry decision if
+     * this worker still owns the lease.
      */
     @Transactional
     public boolean completeFailure(
             DeliveryWorkSnapshot work,
-            DeliveryAttemptOutcome outcome,
+            DeliveryRetryDecision decision,
             Integer httpStatus,
-            String errorCode,
             Instant startedAt,
             Instant completedAt
     ) {
         Objects.requireNonNull(work, "work");
-        return completeFailure(
-                work.deliveryId(), work.claimToken(), outcome, httpStatus, errorCode,
-                startedAt, completedAt
-        );
-    }
-
-    /**
-     * Token-guarded basic failure by delivery identity.
-     */
-    @Transactional
-    public boolean completeFailure(
-            UUID deliveryId,
-            UUID claimToken,
-            DeliveryAttemptOutcome outcome,
-            Integer httpStatus,
-            String errorCode,
-            Instant startedAt,
-            Instant completedAt
-    ) {
-        validateCompletionIdentity(deliveryId, claimToken);
-        Objects.requireNonNull(outcome, "outcome");
-        if (outcome == DeliveryAttemptOutcome.SUCCESS) {
-            throw new IllegalArgumentException("failure outcome must not be SUCCESS");
-        }
+        validateCompletionIdentity(work.deliveryId(), work.claimToken());
+        Objects.requireNonNull(decision, "decision");
         validateHttpStatus(httpStatus, false);
-        String boundedErrorCode = validateErrorCode(errorCode);
         validateTimestamps(startedAt, completedAt);
         return complete(
-                deliveryId,
-                claimToken,
-                DeliveryStatus.FAILED,
-                outcome,
+                work.deliveryId(),
+                work.claimToken(),
+                decision.targetStatus(),
+                decision.outcome(),
                 httpStatus,
-                boundedErrorCode,
+                validateErrorCode(decision.errorCode()),
+                decision.nextRetryAt(),
                 startedAt,
                 completedAt
         );
@@ -204,6 +182,7 @@ public class DeliveryClaimStore {
             DeliveryAttemptOutcome outcome,
             Integer httpStatus,
             String errorCode,
+            Instant nextRetryAt,
             Instant startedAt,
             Instant completedAt
     ) {
@@ -211,9 +190,11 @@ public class DeliveryClaimStore {
                 """
                 UPDATE deliveries
                 SET status = ?,
+                    next_retry_at = ?,
                     claim_token = NULL,
                     claimed_at = NULL,
                     attempt_count = attempt_count + 1,
+                    run_attempt_count = run_attempt_count + 1,
                     updated_at = ?
                 WHERE id = ?
                   AND claim_token = ?
@@ -222,9 +203,10 @@ public class DeliveryClaimStore {
                 """,
                 statement -> {
                     statement.setString(1, status.name());
-                    statement.setObject(2, asOffsetDateTime(completedAt));
-                    statement.setObject(3, deliveryId);
-                    statement.setObject(4, claimToken);
+                    statement.setObject(2, nextRetryAt == null ? null : asOffsetDateTime(nextRetryAt));
+                    statement.setObject(3, asOffsetDateTime(completedAt));
+                    statement.setObject(4, deliveryId);
+                    statement.setObject(5, claimToken);
                 },
                 (resultSet, rowNumber) -> resultSet.getInt("attempt_count")
         );
@@ -311,7 +293,8 @@ public class DeliveryClaimStore {
                     resultSet.getString("endpoint_url"),
                     resultSet.getBoolean("endpoint_enabled"),
                     resultSet.getObject("claim_token", UUID.class),
-                    resultSet.getInt("next_attempt_number")
+                    resultSet.getInt("next_attempt_number"),
+                    resultSet.getInt("current_run_attempt_number")
             );
         } catch (JsonProcessingException exception) {
             throw new SQLException("delivery payload is not valid JSON", exception);

@@ -20,8 +20,27 @@ public record DeliveryWorkSnapshot(
         String endpointUrl,
         boolean endpointEnabled,
         UUID claimToken,
-        int nextAttemptNumber
+        int nextAttemptNumber,
+        int currentRunAttemptNumber
 ) {
+
+    /** Compatibility constructor for callers created before retry state. */
+    public DeliveryWorkSnapshot(
+            UUID deliveryId,
+            UUID eventId,
+            UUID endpointId,
+            String eventType,
+            JsonNode payload,
+            String endpointUrl,
+            boolean endpointEnabled,
+            UUID claimToken,
+            int nextAttemptNumber
+    ) {
+        this(
+                deliveryId, eventId, endpointId, eventType, payload, endpointUrl,
+                endpointEnabled, claimToken, nextAttemptNumber, nextAttemptNumber
+        );
+    }
 
     public DeliveryWorkSnapshot {
         deliveryId = Objects.requireNonNull(deliveryId, "deliveryId");
@@ -33,6 +52,9 @@ public record DeliveryWorkSnapshot(
         claimToken = Objects.requireNonNull(claimToken, "claimToken");
         if (nextAttemptNumber < 1) {
             throw new IllegalArgumentException("nextAttemptNumber must be positive");
+        }
+        if (currentRunAttemptNumber < 1) {
+            throw new IllegalArgumentException("currentRunAttemptNumber must be positive");
         }
     }
 

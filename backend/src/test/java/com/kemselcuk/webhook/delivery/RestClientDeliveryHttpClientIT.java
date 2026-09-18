@@ -41,7 +41,7 @@ class RestClientDeliveryHttpClientIT {
     @Test
     void postsExactJsonAndStableHeadersAndReturnsTwoHundredStatus() throws Exception {
         wireMock.stubFor(com.github.tomakehurst.wiremock.client.WireMock.post(urlEqualTo("/hooks"))
-                .willReturn(aResponse().withStatus(204)));
+                .willReturn(aResponse().withStatus(204).withHeader("Retry-After", " 7 ")));
         UUID eventId = UUID.randomUUID();
         UUID deliveryId = UUID.randomUUID();
         DeliveryWorkSnapshot work = work(eventId, deliveryId, wireMock.baseUrl() + "/hooks");
@@ -50,6 +50,7 @@ class RestClientDeliveryHttpClientIT {
 
         assertThat(result.httpStatus()).isEqualTo(204);
         assertThat(result.transportFailure()).isNull();
+        assertThat(result.retryAfter()).isEqualTo("7");
         wireMock.verify(postRequestedFor(urlEqualTo("/hooks"))
                 .withRequestBody(equalTo("{\"orderId\":\"order-123\",\"items\":[1,2]}"))
                 .withHeader("Content-Type", equalTo("application/json"))
@@ -69,6 +70,20 @@ class RestClientDeliveryHttpClientIT {
         DeliveryHttpResult result = client.post(work);
         assertThat(result.httpStatus()).isEqualTo(418);
         assertThat(result.transportFailure()).isNull();
+        assertThat(result.retryAfter()).isNull();
+    }
+
+    @Test
+    void discardsOverlongRetryAfterHeader() {
+        wireMock.stubFor(com.github.tomakehurst.wiremock.client.WireMock.post(urlEqualTo("/overlong"))
+                .willReturn(aResponse().withStatus(429).withHeader("Retry-After", "x".repeat(129))));
+        DeliveryWorkSnapshot work = work(UUID.randomUUID(), UUID.randomUUID(),
+                wireMock.baseUrl() + "/overlong");
+
+        DeliveryHttpResult result = client.post(work);
+
+        assertThat(result.httpStatus()).isEqualTo(429);
+        assertThat(result.retryAfter()).isNull();
     }
 
     @Test

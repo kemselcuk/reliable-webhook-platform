@@ -38,7 +38,10 @@ public class RestClientDeliveryHttpClient implements DeliveryHttpClient {
                     .body(work.payload().toString().getBytes(java.nio.charset.StandardCharsets.UTF_8))
                     .exchange((request, response) -> {
                         discardBody(response.getBody());
-                        return DeliveryHttpResult.httpStatus(response.getStatusCode().value());
+                        return DeliveryHttpResult.httpStatus(
+                                response.getStatusCode().value(),
+                                sanitizedRetryAfter(response.getHeaders().getFirst("Retry-After"))
+                        );
                     });
         } catch (ResourceAccessException exception) {
             return DeliveryHttpResult.transportFailure(classify(exception));
@@ -53,6 +56,14 @@ public class RestClientDeliveryHttpClient implements DeliveryHttpClient {
         if (body != null) {
             body.close();
         }
+    }
+
+    private static String sanitizedRetryAfter(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() || trimmed.length() > 128 ? null : trimmed;
     }
 
     private static DeliveryTransportFailure classify(ResourceAccessException exception) {

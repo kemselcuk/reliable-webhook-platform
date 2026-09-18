@@ -1,7 +1,6 @@
 package com.kemselcuk.webhook.delivery;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.kemselcuk.webhook.domain.DeliveryAttemptOutcome;
 import com.kemselcuk.webhook.domain.DeliveryStatus;
 import org.junit.jupiter.api.Test;
 
@@ -43,7 +42,7 @@ class DeliveryWorkerTest {
         assertThat(result.disposition()).isEqualTo(DeliveryWorkerDisposition.BUSY);
         verify(httpClient, never()).post(any());
         verify(claimStore, never()).completeSuccess(any(), any(), any(), any());
-        verify(claimStore, never()).completeFailure(any(), any(), any(), any(), any(), any());
+        verify(claimStore, never()).completeFailure(any(), any(), any(), any(), any());
     }
 
     @Test
@@ -64,11 +63,11 @@ class DeliveryWorkerTest {
         assertThat(result.deliveryStatus()).isEqualTo(DeliveryStatus.SUCCESS);
         assertThat(result.httpStatus()).isEqualTo(204);
         verify(claimStore).completeSuccess(work, 204, NOW, NOW);
-        verify(claimStore, never()).completeFailure(any(), any(), any(), any(), any(), any());
+        verify(claimStore, never()).completeFailure(any(), any(), any(), any(), any());
     }
 
     @Test
-    void nonTwoHundredResponseCompletesFailedWithBasicRetryableClassification() {
+    void retryableServerResponseSchedulesRetryThroughPolicy() {
         DeliveryClaimStore claimStore = mock(DeliveryClaimStore.class);
         DeliveryHttpClient httpClient = mock(DeliveryHttpClient.class);
         DeliveryWorkSnapshot work = work();
@@ -76,20 +75,107 @@ class DeliveryWorkerTest {
                 .thenReturn(DeliveryClaimResult.claimed(work));
         when(httpClient.post(work)).thenReturn(DeliveryHttpResult.httpStatus(503));
         when(claimStore.completeFailure(
-                eq(work), eq(DeliveryAttemptOutcome.RETRYABLE_FAILURE), eq(503),
-                eq("HTTP_503"), eq(NOW), eq(NOW)
+                eq(work),
+                eq(DeliveryRetryDecision.scheduled(NOW.plusSeconds(1), "HTTP_503")),
+                eq(503),
+                eq(NOW),
+                eq(NOW)
         )).thenReturn(true);
         DeliveryWorker worker = worker(claimStore, httpClient);
 
         DeliveryWorkerResult result = worker.process(DELIVERY_ID);
 
         assertThat(result.disposition()).isEqualTo(DeliveryWorkerDisposition.FAILED);
-        assertThat(result.deliveryStatus()).isEqualTo(DeliveryStatus.FAILED);
+        assertThat(result.deliveryStatus()).isEqualTo(DeliveryStatus.RETRY_SCHEDULED);
         assertThat(result.httpStatus()).isEqualTo(503);
         verify(claimStore).completeFailure(
-                work, DeliveryAttemptOutcome.RETRYABLE_FAILURE, 503,
-                "HTTP_503", NOW, NOW
+                work,
+                DeliveryRetryDecision.scheduled(NOW.plusSeconds(1), "HTTP_503"),
+                503,
+                NOW,
+                NOW
         );
+    }
+
+    @Test
+    void retryAfterMetadataReachesPolicyAndPersistsTheLongerDelay() {
+        DeliveryClaimStore claimStore = mock(DeliveryClaimStore.class);
+        DeliveryHttpClient httpClient = mock(DeliveryHttpClient.class);
+        DeliveryWorkSnapshot work = work();
+        when(claimStore.claim(DELIVERY_ID, NOW, Duration.ofMinutes(5)))
+                .thenReturn(DeliveryClaimResult.claimed(work));
+        when(httpClient.post(work)).thenReturn(DeliveryHttpResult.httpStatus(429, "20"));
+        when(claimStore.completeFailure(
+                eq(work),
+                eq(DeliveryRetryDecision.scheduled(NOW.plusSeconds(20), "HTTP_429")),
+                eq(429),
+                eq(NOW),
+                eq(NOW)
+        )).thenReturn(true);
+        DeliveryWorker worker = worker(claimStore, httpClient);
+
+        DeliveryWorkerResult result = worker.process(DELIVERY_ID);
+
+        assertThat(result.deliveryStatus()).isEqualTo(DeliveryStatus.RETRY_SCHEDULED);
+        verify(claimStore).completeFailure(
+                work,
+                DeliveryRetryDecision.scheduled(NOW.plusSeconds(20), "HTTP_429"),
+                429,
+                NOW,
+                NOW
+        );
+    }
+
+    @Test
+    void maxAttemptPolicyResultIsPersistedAsDead() {
+        DeliveryClaimStore claimStore = mock(DeliveryClaimStore.class);
+        DeliveryHttpClient httpClient = mock(DeliveryHttpClient.class);
+        DeliveryWorkSnapshot work = work(5, 5);
+        when(claimStore.claim(DELIVERY_ID, NOW, Duration.ofMinutes(5)))
+                .thenReturn(DeliveryClaimResult.claimed(work));
+        when(httpClient.post(work)).thenReturn(DeliveryHttpResult.httpStatus(500));
+        when(claimStore.completeFailure(
+                eq(work),
+                eq(DeliveryRetryDecision.dead("HTTP_500")),
+                eq(500),
+                eq(NOW),
+                eq(NOW)
+        )).thenReturn(true);
+        DeliveryWorker worker = worker(claimStore, httpClient);
+
+        DeliveryWorkerResult result = worker.process(DELIVERY_ID);
+
+        assertThat(result.deliveryStatus()).isEqualTo(DeliveryStatus.DEAD);
+        verify(claimStore).completeFailure(
+                work,
+                DeliveryRetryDecision.dead("HTTP_500"),
+                500,
+                NOW,
+                NOW
+        );
+    }
+
+    @Test
+    void staleFailureCompletionIsExposedWithoutAnotherPersistenceCall() {
+        DeliveryClaimStore claimStore = mock(DeliveryClaimStore.class);
+        DeliveryHttpClient httpClient = mock(DeliveryHttpClient.class);
+        DeliveryWorkSnapshot work = work();
+        when(claimStore.claim(DELIVERY_ID, NOW, Duration.ofMinutes(5)))
+                .thenReturn(DeliveryClaimResult.claimed(work));
+        when(httpClient.post(work)).thenReturn(DeliveryHttpResult.httpStatus(503));
+        when(claimStore.completeFailure(
+                eq(work),
+                eq(DeliveryRetryDecision.scheduled(NOW.plusSeconds(1), "HTTP_503")),
+                eq(503),
+                eq(NOW),
+                eq(NOW)
+        )).thenReturn(false);
+        DeliveryWorker worker = worker(claimStore, httpClient);
+
+        DeliveryWorkerResult result = worker.process(DELIVERY_ID);
+
+        assertThat(result.disposition()).isEqualTo(DeliveryWorkerDisposition.STALE_COMPLETION);
+        assertThat(result.httpStatus()).isEqualTo(503);
     }
 
     @Test
@@ -103,19 +189,26 @@ class DeliveryWorkerTest {
                 DeliveryTransportFailure.TIMEOUT
         ));
         when(claimStore.completeFailure(
-                eq(work), eq(DeliveryAttemptOutcome.RETRYABLE_FAILURE), isNull(Integer.class),
-                eq("TIMEOUT"), eq(NOW), eq(NOW)
+                eq(work),
+                eq(DeliveryRetryDecision.scheduled(NOW.plusSeconds(1), "TIMEOUT")),
+                isNull(Integer.class),
+                eq(NOW),
+                eq(NOW)
         )).thenReturn(true);
         DeliveryWorker worker = worker(claimStore, httpClient);
 
         DeliveryWorkerResult result = worker.process(DELIVERY_ID);
 
         assertThat(result.disposition()).isEqualTo(DeliveryWorkerDisposition.FAILED);
+        assertThat(result.deliveryStatus()).isEqualTo(DeliveryStatus.RETRY_SCHEDULED);
         assertThat(result.httpStatus()).isNull();
         assertThat(result.transportFailure()).isEqualTo(DeliveryTransportFailure.TIMEOUT);
         verify(claimStore).completeFailure(
-                work, DeliveryAttemptOutcome.RETRYABLE_FAILURE, null,
-                "TIMEOUT", NOW, NOW
+                work,
+                DeliveryRetryDecision.scheduled(NOW.plusSeconds(1), "TIMEOUT"),
+                null,
+                NOW,
+                NOW
         );
     }
 
@@ -146,16 +239,22 @@ class DeliveryWorkerTest {
                 .thenReturn(DeliveryClaimResult.claimed(work));
         when(httpClient.post(work)).thenReturn(DeliveryHttpResult.httpStatus(404));
         when(claimStore.completeFailure(
-                eq(work), eq(DeliveryAttemptOutcome.PERMANENT_FAILURE), eq(404),
-                eq("HTTP_404"), eq(NOW), eq(NOW)
+                eq(work),
+                eq(DeliveryRetryDecision.permanent("HTTP_404")),
+                eq(404),
+                eq(NOW),
+                eq(NOW)
         )).thenReturn(true);
         DeliveryWorker worker = worker(claimStore, httpClient);
 
         assertThat(worker.process(DELIVERY_ID).disposition())
                 .isEqualTo(DeliveryWorkerDisposition.FAILED);
         verify(claimStore).completeFailure(
-                work, DeliveryAttemptOutcome.PERMANENT_FAILURE, 404,
-                "HTTP_404", NOW, NOW
+                work,
+                DeliveryRetryDecision.permanent("HTTP_404"),
+                404,
+                NOW,
+                NOW
         );
     }
 
@@ -168,16 +267,22 @@ class DeliveryWorkerTest {
                 .thenReturn(DeliveryClaimResult.claimed(work));
         when(httpClient.post(work)).thenReturn(DeliveryHttpResult.httpStatus(302));
         when(claimStore.completeFailure(
-                eq(work), eq(DeliveryAttemptOutcome.PERMANENT_FAILURE), eq(302),
-                eq("HTTP_302"), eq(NOW), eq(NOW)
+                eq(work),
+                eq(DeliveryRetryDecision.permanent("HTTP_302")),
+                eq(302),
+                eq(NOW),
+                eq(NOW)
         )).thenReturn(true);
         DeliveryWorker worker = worker(claimStore, httpClient);
 
         assertThat(worker.process(DELIVERY_ID).disposition())
                 .isEqualTo(DeliveryWorkerDisposition.FAILED);
         verify(claimStore).completeFailure(
-                work, DeliveryAttemptOutcome.PERMANENT_FAILURE, 302,
-                "HTTP_302", NOW, NOW
+                work,
+                DeliveryRetryDecision.permanent("HTTP_302"),
+                302,
+                NOW,
+                NOW
         );
     }
 
@@ -188,12 +293,21 @@ class DeliveryWorkerTest {
                 claimStore,
                 httpClient,
                 properties,
-                new BasicDeliveryOutcomeClassifier(),
+                retryPolicy(),
                 Clock.fixed(NOW, ZoneOffset.UTC)
         );
     }
 
+    private DeliveryRetryPolicy retryPolicy() {
+        DeliveryRetryProperties properties = new DeliveryRetryProperties();
+        return new DeliveryRetryPolicy(properties, () -> 0.5);
+    }
+
     private DeliveryWorkSnapshot work() {
+        return work(1, 1);
+    }
+
+    private DeliveryWorkSnapshot work(int nextAttemptNumber, int currentRunAttemptNumber) {
         try {
             return new DeliveryWorkSnapshot(
                     DELIVERY_ID,
@@ -204,7 +318,8 @@ class DeliveryWorkerTest {
                     "http://localhost/hooks",
                     true,
                     CLAIM_TOKEN,
-                    1
+                    nextAttemptNumber,
+                    currentRunAttemptNumber
             );
         } catch (Exception exception) {
             throw new AssertionError(exception);
