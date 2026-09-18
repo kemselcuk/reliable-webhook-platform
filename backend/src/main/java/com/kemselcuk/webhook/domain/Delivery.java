@@ -44,6 +44,9 @@ public class Delivery {
     @Column(name = "attempt_count", nullable = false)
     private int attemptCount;
 
+    @Column(name = "run_attempt_count", nullable = false)
+    private int runAttemptCount;
+
     @Column(name = "next_retry_at")
     private Instant nextRetryAt;
 
@@ -95,6 +98,10 @@ public class Delivery {
 
     public int getAttemptCount() {
         return attemptCount;
+    }
+
+    public int getRunAttemptCount() {
+        return runAttemptCount;
     }
 
     public Instant getNextRetryAt() {
