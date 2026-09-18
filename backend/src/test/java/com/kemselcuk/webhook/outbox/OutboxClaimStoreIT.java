@@ -50,6 +50,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 )
 class OutboxClaimStoreIT {
 
+    private static final Instant TEST_AVAILABLE_AT = Instant.parse("2026-09-18T09:59:00Z");
+
     @Container
     static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:17-alpine")
             .withDatabaseName("webhook_outbox_claim_test")
@@ -305,6 +307,14 @@ class OutboxClaimStoreIT {
         List<OutboxEvent> outboxEvents = deliveries.stream()
                 .map(OutboxEvent::forDelivery)
                 .toList();
-        return outboxEventRepository.saveAllAndFlush(outboxEvents);
+        List<OutboxEvent> savedOutboxEvents = outboxEventRepository.saveAllAndFlush(outboxEvents);
+        savedOutboxEvents.forEach(outboxEvent -> jdbcTemplate.update(
+                "UPDATE outbox_events SET available_at = ?, created_at = ?, updated_at = ? WHERE id = ?",
+                java.sql.Timestamp.from(TEST_AVAILABLE_AT),
+                java.sql.Timestamp.from(TEST_AVAILABLE_AT),
+                java.sql.Timestamp.from(TEST_AVAILABLE_AT),
+                outboxEvent.getId()
+        ));
+        return savedOutboxEvents;
     }
 }
