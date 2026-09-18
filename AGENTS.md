@@ -120,4 +120,4 @@ Do not treat an internally completed coding increment as a completed phase; the 
 
 ## Current recovery point
 
-At the latest update, Phases 0–3 are complete and Phase 3 is merged to `main` at `6b538f5`; follow-up documentation commit `a5db705` and the merge are verified by green `main` CI run `35288805583`. Phase 3 passed the full backend/frontend suites, a fresh real Compose delivery, and all acceptance criteria. Stop at this phase boundary and wait for explicit user direction before starting Phase 4. Re-read `docs/PLAN.md` and Git history for the exact branch and commit state.
+At the latest update, Phases 0–3 are complete and Phase 4 has started on `feature/phase-4-reliable-retry`. The next implementation increment is durable failure classification and retry state, followed by outbox-based due-retry requeueing, `DEAD`, manual replay, and the Phase 4 failure-path acceptance tests. Re-read `docs/PLAN.md` and Git history for the exact branch and commit state; do not start Phase 5 before the Phase 4 boundary handoff.
