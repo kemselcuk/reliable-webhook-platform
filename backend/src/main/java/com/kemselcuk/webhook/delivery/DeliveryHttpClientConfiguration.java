@@ -6,6 +6,7 @@ import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
 
 import java.net.http.HttpClient;
+import java.time.Clock;
 
 /**
  * Creates one reusable, thread-safe JDK-backed RestClient for webhook calls.
@@ -27,7 +28,7 @@ public class DeliveryHttpClientConfiguration {
     }
 
     @Bean
-    DeliveryHttpClient deliveryHttpClient(RestClient deliveryRestClient) {
-        return new RestClientDeliveryHttpClient(deliveryRestClient);
+    DeliveryHttpClient deliveryHttpClient(RestClient deliveryRestClient, Clock clock) {
+        return new RestClientDeliveryHttpClient(deliveryRestClient, clock);
     }
 }

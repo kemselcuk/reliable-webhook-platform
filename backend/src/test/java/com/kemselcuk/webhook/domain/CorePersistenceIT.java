@@ -75,6 +75,11 @@ class CorePersistenceIT {
                 WHERE table_schema = 'public'
                   AND table_name IN ('webhook_endpoints', 'events', 'deliveries', 'delivery_attempts', 'outbox_events')
                 """, Integer.class)).isEqualTo(5);
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM information_schema.tables "
+                        + "WHERE table_schema = 'public' AND table_name = 'webhook_endpoint_secrets'",
+                Integer.class
+        )).isEqualTo(1);
 
         JsonNode payload = objectMapper.readTree("""
                 {"orderId":"order-123","total":42.50,"items":[{"sku":"sku-1","quantity":2}]}
@@ -85,6 +90,35 @@ class CorePersistenceIT {
         WebhookEndpoint endpoint = endpointRepository.saveAndFlush(
                 WebhookEndpoint.create("Orders", "https://example.test/webhooks")
         );
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM webhook_endpoint_secrets WHERE webhook_endpoint_id = ?",
+                Integer.class,
+                endpoint.getId()
+        )).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT octet_length(secret_material) FROM webhook_endpoint_secrets "
+                        + "WHERE webhook_endpoint_id = ? AND active = TRUE",
+                Integer.class,
+                endpoint.getId()
+        )).isEqualTo(32);
+        assertThatThrownBy(() -> jdbcTemplate.update(
+                "INSERT INTO webhook_endpoint_secrets "
+                        + "(id, webhook_endpoint_id, secret_version, key_id, secret_material, active) "
+                        + "VALUES (?, ?, 2, 'v2', ?, TRUE)",
+                java.util.UUID.randomUUID(), endpoint.getId(), new byte[32]
+        )).isInstanceOf(DataIntegrityViolationException.class);
+        assertThatThrownBy(() -> jdbcTemplate.update(
+                "INSERT INTO webhook_endpoint_secrets "
+                        + "(id, webhook_endpoint_id, secret_version, key_id, secret_material, active) "
+                        + "VALUES (?, ?, 2, 'short', ?, FALSE)",
+                java.util.UUID.randomUUID(), endpoint.getId(), new byte[31]
+        )).isInstanceOf(DataIntegrityViolationException.class);
+        assertThatThrownBy(() -> jdbcTemplate.update(
+                "INSERT INTO webhook_endpoint_secrets "
+                        + "(id, webhook_endpoint_id, secret_version, key_id, secret_material, active) "
+                        + "VALUES (?, ?, 2, 'long', ?, FALSE)",
+                java.util.UUID.randomUUID(), endpoint.getId(), new byte[513]
+        )).isInstanceOf(DataIntegrityViolationException.class);
         Event event = eventRepository.saveAndFlush(Event.create("order.created", payload));
         Delivery delivery = deliveryRepository.saveAndFlush(Delivery.create(event, endpoint));
         DeliveryAttempt attempt = attemptRepository.saveAndFlush(DeliveryAttempt.create(

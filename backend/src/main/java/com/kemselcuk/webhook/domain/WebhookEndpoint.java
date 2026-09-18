@@ -1,5 +1,7 @@
 package com.kemselcuk.webhook.domain;
 
+import com.kemselcuk.webhook.security.SigningSecret;
+import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.FetchType;
@@ -43,18 +45,31 @@ public class WebhookEndpoint {
     @OneToMany(mappedBy = "webhookEndpoint", fetch = FetchType.LAZY)
     private final List<Delivery> deliveries = new ArrayList<>();
 
+    @OneToMany(mappedBy = "endpoint", cascade = CascadeType.ALL, orphanRemoval = true,
+            fetch = FetchType.LAZY)
+    private final List<WebhookEndpointSecret> signingSecrets = new ArrayList<>();
+
     protected WebhookEndpoint() {
         // Required by JPA.
     }
 
     private WebhookEndpoint(String name, String url) {
+        this(name, url, SigningSecret.generate());
+    }
+
+    private WebhookEndpoint(String name, String url, SigningSecret secret) {
         this.name = requireText(name, "name");
         this.url = requireText(url, "url");
         this.enabled = true;
+        signingSecrets.add(WebhookEndpointSecret.initial(this, secret));
     }
 
     public static WebhookEndpoint create(String name, String url) {
         return new WebhookEndpoint(name, url);
+    }
+
+    public static WebhookEndpoint create(String name, String url, SigningSecret secret) {
+        return new WebhookEndpoint(name, url, Objects.requireNonNull(secret, "secret"));
     }
 
     public UUID getId() {

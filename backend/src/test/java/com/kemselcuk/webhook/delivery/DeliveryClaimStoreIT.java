@@ -14,6 +14,7 @@ import com.kemselcuk.webhook.domain.repository.DeliveryRepository;
 import com.kemselcuk.webhook.domain.repository.EventRepository;
 import com.kemselcuk.webhook.domain.repository.OutboxEventRepository;
 import com.kemselcuk.webhook.domain.repository.WebhookEndpointRepository;
+import com.kemselcuk.webhook.security.SigningSecret;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -53,6 +54,7 @@ class DeliveryClaimStoreIT {
 
     private static final Instant FIRST_CLAIM_AT = Instant.parse("2026-09-18T10:00:00Z");
     private static final Duration CLAIM_TIMEOUT = Duration.ofMinutes(5);
+    private static final SigningSecret TEST_SECRET = SigningSecret.fromText("s".repeat(32));
 
     @Container
     static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:17-alpine")
@@ -179,6 +181,9 @@ class DeliveryClaimStoreIT {
         Delivery delivery = seedDelivery(true);
         DeliveryClaimResult first = claimStore.claim(delivery.getId(), FIRST_CLAIM_AT, CLAIM_TIMEOUT);
         assertThat(first.disposition()).isEqualTo(DeliveryClaimDisposition.CLAIMED);
+        assertThat(first.work().signingKeyId()).isEqualTo("v1");
+        assertThat(first.work().signingSecret()).isEqualTo(TEST_SECRET);
+        assertThat(first.work().signingSecret().toString()).doesNotContain("s".repeat(32));
 
         DeliveryClaimResult busy = claimStore.claim(
                 delivery.getId(), FIRST_CLAIM_AT.plus(Duration.ofMinutes(1)), CLAIM_TIMEOUT
@@ -452,7 +457,7 @@ class DeliveryClaimStoreIT {
 
     private Delivery seedDelivery(boolean enabled, String name) {
         WebhookEndpoint endpoint = endpointRepository.saveAndFlush(
-                WebhookEndpoint.create(name, "https://orders.example.test/hooks")
+                WebhookEndpoint.create(name, "https://orders.example.test/hooks", TEST_SECRET)
         );
         if (!enabled) {
             endpoint.disable();

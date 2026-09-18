@@ -148,6 +148,7 @@ class DeliveryPipelineIT {
                 objectMapper.createObjectNode()
                         .put("name", "Orders")
                         .put("url", wireMock.baseUrl() + PATH)
+                        .put("secret", "ssssssssssssssssssssssssssssssss")
         );
         assertThat(endpointResponse.getStatusCode().value()).isEqualTo(201);
         JsonNode endpoint = endpointResponse.getBody();

@@ -69,6 +69,21 @@ export function parseJsonPayload(text) {
   }
 }
 
+/**
+ * Validate the backend's byte-based endpoint secret contract without putting
+ * the submitted secret into an error message.
+ *
+ * @param {string} secret
+ * @returns {string | null}
+ */
+export function signingSecretValidationMessage(secret) {
+  const byteLength = new TextEncoder().encode(secret).byteLength;
+  if (byteLength < 32 || byteLength > 512) {
+    return 'Signing secret must contain between 32 and 512 UTF-8 bytes.';
+  }
+  return null;
+}
+
 const knownProblemCodes = new Set([
   'VALIDATION_ERROR',
   'MALFORMED_JSON',

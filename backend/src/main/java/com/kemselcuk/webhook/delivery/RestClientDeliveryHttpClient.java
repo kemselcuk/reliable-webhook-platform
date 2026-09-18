@@ -1,5 +1,6 @@
 package com.kemselcuk.webhook.delivery;
 
+import com.kemselcuk.webhook.security.WebhookSignature;
 import org.springframework.http.MediaType;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
@@ -9,6 +10,9 @@ import java.io.InputStream;
 import java.net.ConnectException;
 import java.net.http.HttpConnectTimeoutException;
 import java.net.http.HttpTimeoutException;
+import java.nio.charset.StandardCharsets;
+import java.time.Clock;
+import java.time.Instant;
 import java.util.Objects;
 
 /**
@@ -19,14 +23,23 @@ import java.util.Objects;
 public class RestClientDeliveryHttpClient implements DeliveryHttpClient {
 
     private final RestClient restClient;
+    private final Clock clock;
 
+    /** Retained for callers that do not need deterministic signing timestamps. */
     public RestClientDeliveryHttpClient(RestClient restClient) {
+        this(restClient, Clock.systemUTC());
+    }
+
+    public RestClientDeliveryHttpClient(RestClient restClient, Clock clock) {
         this.restClient = Objects.requireNonNull(restClient, "restClient");
+        this.clock = Objects.requireNonNull(clock, "clock");
     }
 
     @Override
     public DeliveryHttpResult post(DeliveryWorkSnapshot work) {
         Objects.requireNonNull(work, "work");
+        byte[] rawBody = work.payload().toString().getBytes(StandardCharsets.UTF_8);
+        Instant timestamp = clock.instant();
         try {
             return restClient.post()
                     .uri(work.endpointUrl())
@@ -35,7 +48,12 @@ public class RestClientDeliveryHttpClient implements DeliveryHttpClient {
                     .header("X-Webhook-Id", work.eventId().toString())
                     .header("X-Delivery-Id", work.deliveryId().toString())
                     .header("X-Webhook-Event", work.eventType())
-                    .body(work.payload().toString().getBytes(java.nio.charset.StandardCharsets.UTF_8))
+                    .header("X-Webhook-Timestamp", WebhookSignature.timestampHeaderValue(timestamp))
+                    .header("X-Webhook-Signature", WebhookSignature.sign(
+                            work.signingSecret(), timestamp, rawBody
+                    ))
+                    .header("X-Webhook-Key-Id", work.signingKeyId())
+                    .body(rawBody)
                     .exchange((request, response) -> {
                         discardBody(response.getBody());
                         return DeliveryHttpResult.httpStatus(

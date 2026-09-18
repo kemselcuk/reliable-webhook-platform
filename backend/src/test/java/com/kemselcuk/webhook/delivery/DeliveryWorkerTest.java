@@ -2,6 +2,7 @@ package com.kemselcuk.webhook.delivery;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kemselcuk.webhook.domain.DeliveryStatus;
+import com.kemselcuk.webhook.security.SigningSecret;
 import org.junit.jupiter.api.Test;
 
 import java.time.Clock;
@@ -319,7 +320,9 @@ class DeliveryWorkerTest {
                     true,
                     CLAIM_TOKEN,
                     nextAttemptNumber,
-                    currentRunAttemptNumber
+                    currentRunAttemptNumber,
+                    "v1",
+                    SigningSecret.fromText("s".repeat(32))
             );
         } catch (Exception exception) {
             throw new AssertionError(exception);

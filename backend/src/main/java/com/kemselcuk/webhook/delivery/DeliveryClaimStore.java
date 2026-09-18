@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kemselcuk.webhook.domain.DeliveryAttemptOutcome;
 import com.kemselcuk.webhook.domain.DeliveryStatus;
+import com.kemselcuk.webhook.security.SigningSecret;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
@@ -64,6 +65,12 @@ public class DeliveryClaimStore {
                     WHERE d.id = ?
                       AND endpoint.id = d.webhook_endpoint_id
                       AND endpoint.enabled = TRUE
+                      AND EXISTS (
+                          SELECT 1
+                          FROM webhook_endpoint_secrets active_secret
+                          WHERE active_secret.webhook_endpoint_id = endpoint.id
+                            AND active_secret.active = TRUE
+                      )
                       AND (
                           d.status = 'PENDING'
                           OR (d.status = 'PROCESSING' AND d.claimed_at <= ?)
@@ -78,6 +85,8 @@ public class DeliveryClaimStore {
                        event.payload::text AS payload,
                        endpoint.url AS endpoint_url,
                        endpoint.enabled AS endpoint_enabled,
+                       active_secret.key_id AS signing_key_id,
+                       active_secret.secret_material,
                        claimed.claim_token,
                        claimed.attempt_count + 1 AS next_attempt_number,
                        claimed.run_attempt_count + 1 AS current_run_attempt_number
@@ -85,6 +94,9 @@ public class DeliveryClaimStore {
                 JOIN events event ON event.id = claimed.event_id
                 JOIN webhook_endpoints endpoint
                   ON endpoint.id = claimed.webhook_endpoint_id
+                JOIN webhook_endpoint_secrets active_secret
+                  ON active_secret.webhook_endpoint_id = claimed.webhook_endpoint_id
+                 AND active_secret.active = TRUE
                 """,
                 statement -> {
                     statement.setObject(1, claimToken);
@@ -294,7 +306,9 @@ public class DeliveryClaimStore {
                     resultSet.getBoolean("endpoint_enabled"),
                     resultSet.getObject("claim_token", UUID.class),
                     resultSet.getInt("next_attempt_number"),
-                    resultSet.getInt("current_run_attempt_number")
+                    resultSet.getInt("current_run_attempt_number"),
+                    resultSet.getString("signing_key_id"),
+                    SigningSecret.fromBytes(resultSet.getBytes("secret_material"))
             );
         } catch (JsonProcessingException exception) {
             throw new SQLException("delivery payload is not valid JSON", exception);
