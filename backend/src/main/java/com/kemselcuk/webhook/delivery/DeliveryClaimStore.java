@@ -146,61 +146,6 @@ public class DeliveryClaimStore {
     }
 
     /**
-     * Complete a basic failure if this worker still owns the lease. Retry
-     * scheduling and outcome classification intentionally remain outside this
-     * persistence component.
-     */
-    @Transactional
-    public boolean completeFailure(
-            DeliveryWorkSnapshot work,
-            DeliveryAttemptOutcome outcome,
-            Integer httpStatus,
-            String errorCode,
-            Instant startedAt,
-            Instant completedAt
-    ) {
-        Objects.requireNonNull(work, "work");
-        return completeFailure(
-                work.deliveryId(), work.claimToken(), outcome, httpStatus, errorCode,
-                startedAt, completedAt
-        );
-    }
-
-    /**
-     * Token-guarded basic failure by delivery identity.
-     */
-    @Transactional
-    public boolean completeFailure(
-            UUID deliveryId,
-            UUID claimToken,
-            DeliveryAttemptOutcome outcome,
-            Integer httpStatus,
-            String errorCode,
-            Instant startedAt,
-            Instant completedAt
-    ) {
-        validateCompletionIdentity(deliveryId, claimToken);
-        Objects.requireNonNull(outcome, "outcome");
-        if (outcome == DeliveryAttemptOutcome.SUCCESS) {
-            throw new IllegalArgumentException("failure outcome must not be SUCCESS");
-        }
-        validateHttpStatus(httpStatus, false);
-        String boundedErrorCode = validateErrorCode(errorCode);
-        validateTimestamps(startedAt, completedAt);
-        return complete(
-                deliveryId,
-                claimToken,
-                DeliveryStatus.FAILED,
-                outcome,
-                httpStatus,
-                boundedErrorCode,
-                null,
-                startedAt,
-                completedAt
-        );
-    }
-
-    /**
      * Complete a classified failure and persist its durable retry decision if
      * this worker still owns the lease.
      */

@@ -42,7 +42,7 @@ class DeliveryWorkerTest {
         assertThat(result.disposition()).isEqualTo(DeliveryWorkerDisposition.BUSY);
         verify(httpClient, never()).post(any());
         verify(claimStore, never()).completeSuccess(any(), any(), any(), any());
-        verify(claimStore, never()).completeFailure(any(), any(), any(), any(), any(), any());
+        verify(claimStore, never()).completeFailure(any(), any(), any(), any(), any());
     }
 
     @Test
@@ -63,7 +63,7 @@ class DeliveryWorkerTest {
         assertThat(result.deliveryStatus()).isEqualTo(DeliveryStatus.SUCCESS);
         assertThat(result.httpStatus()).isEqualTo(204);
         verify(claimStore).completeSuccess(work, 204, NOW, NOW);
-        verify(claimStore, never()).completeFailure(any(), any(), any(), any(), any(), any());
+        verify(claimStore, never()).completeFailure(any(), any(), any(), any(), any());
     }
 
     @Test

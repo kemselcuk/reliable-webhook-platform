@@ -196,20 +196,22 @@ class DeliveryClaimStoreIT {
         DeliveryClaimResult claim = claimStore.claim(delivery.getId(), FIRST_CLAIM_AT, CLAIM_TIMEOUT);
         Instant startedAt = FIRST_CLAIM_AT.plusSeconds(1);
         Instant completedAt = startedAt.plusSeconds(3);
+        Instant nextRetryAt = completedAt.plusSeconds(60);
 
         assertThat(claimStore.completeFailure(
                 claim.work(),
-                DeliveryAttemptOutcome.RETRYABLE_FAILURE,
+                DeliveryRetryDecision.scheduled(nextRetryAt, "UPSTREAM_TIMEOUT"),
                 503,
-                "UPSTREAM_TIMEOUT",
                 startedAt,
                 completedAt
         )).isTrue();
 
         assertThat(jdbcTemplate.queryForMap(
-                "SELECT status, claim_token, claimed_at, attempt_count FROM deliveries WHERE id = ?",
+                "SELECT status, next_retry_at, claim_token, claimed_at, attempt_count "
+                        + "FROM deliveries WHERE id = ?",
                 delivery.getId()
-        )).containsEntry("status", "FAILED")
+        )).containsEntry("status", "RETRY_SCHEDULED")
+                .containsEntry("next_retry_at", java.sql.Timestamp.from(nextRetryAt))
                 .containsEntry("claim_token", null)
                 .containsEntry("claimed_at", null)
                 .containsEntry("attempt_count", 1);
@@ -233,9 +235,8 @@ class DeliveryClaimStoreIT {
 
         assertThat(claimStore.completeFailure(
                 claim.work(),
-                DeliveryAttemptOutcome.RETRYABLE_FAILURE,
+                DeliveryRetryDecision.scheduled(completedAt.plusSeconds(60), "NETWORK_FAILURE"),
                 null,
-                "NETWORK_FAILURE",
                 startedAt,
                 completedAt
         )).isTrue();
