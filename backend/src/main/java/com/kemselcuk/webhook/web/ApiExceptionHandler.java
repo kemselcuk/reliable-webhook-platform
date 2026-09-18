@@ -128,6 +128,28 @@ public class ApiExceptionHandler {
         );
     }
 
+    @ExceptionHandler(DeliveryNotFoundException.class)
+    ResponseEntity<ProblemDetail> handleDeliveryNotFound() {
+        return response(
+                HttpStatus.NOT_FOUND,
+                "Delivery not found",
+                "The requested delivery does not exist.",
+                "DELIVERY_NOT_FOUND",
+                Map.of()
+        );
+    }
+
+    @ExceptionHandler(DeliveryNotReplayableException.class)
+    ResponseEntity<ProblemDetail> handleDeliveryNotReplayable() {
+        return response(
+                HttpStatus.CONFLICT,
+                "Delivery not replayable",
+                "Only FAILED or DEAD deliveries can be replayed.",
+                "DELIVERY_NOT_REPLAYABLE",
+                Map.of()
+        );
+    }
+
     @ExceptionHandler(DisabledEndpointException.class)
     ResponseEntity<ProblemDetail> handleDisabledEndpoint() {
         return response(
