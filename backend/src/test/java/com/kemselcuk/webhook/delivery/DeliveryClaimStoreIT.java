@@ -27,8 +27,10 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.Callable;
@@ -37,6 +39,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -130,6 +133,45 @@ class DeliveryClaimStoreIT {
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM deliveries WHERE status = 'PROCESSING'", Integer.class
         )).isEqualTo(1);
+    }
+
+    @Test
+    void concurrentWorkersCannotActivelyProcessTheSameDelivery() throws Exception {
+        Delivery delivery = seedDelivery(true);
+        CountDownLatch httpEntered = new CountDownLatch(1);
+        CountDownLatch releaseHttp = new CountDownLatch(1);
+        AtomicInteger httpCalls = new AtomicInteger();
+        DeliveryHttpClient blockingClient = work -> {
+            httpCalls.incrementAndGet();
+            httpEntered.countDown();
+            try {
+                if (!releaseHttp.await(10, TimeUnit.SECONDS)) {
+                    throw new AssertionError("timed out waiting to release HTTP exchange");
+                }
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError("HTTP exchange was interrupted", exception);
+            }
+            return DeliveryHttpResult.httpStatus(204);
+        };
+        DeliveryWorker firstWorker = worker(blockingClient);
+        DeliveryWorker secondWorker = worker(blockingClient);
+        executor = Executors.newFixedThreadPool(2);
+
+        Future<DeliveryWorkerResult> first = executor.submit(() -> firstWorker.process(delivery.getId()));
+        assertThat(httpEntered.await(10, TimeUnit.SECONDS)).isTrue();
+        DeliveryWorkerResult secondResult = secondWorker.process(delivery.getId());
+
+        assertThat(secondResult.disposition()).isEqualTo(DeliveryWorkerDisposition.BUSY);
+        assertThat(httpCalls).hasValue(1);
+        releaseHttp.countDown();
+
+        assertThat(first.get(10, TimeUnit.SECONDS).disposition())
+                .isEqualTo(DeliveryWorkerDisposition.SUCCESS);
+        assertThat(deliveryRepository.findById(delivery.getId()).orElseThrow().getStatus())
+                .isEqualTo(DeliveryStatus.SUCCESS);
+        assertThat(attemptRepository.findByDeliveryIdOrderByAttemptNumberAsc(delivery.getId()))
+                .hasSize(1);
     }
 
     @Test
@@ -431,5 +473,17 @@ class DeliveryClaimStoreIT {
         } catch (Exception exception) {
             throw new AssertionError(exception);
         }
+    }
+
+    private DeliveryWorker worker(DeliveryHttpClient httpClient) {
+        DeliveryWorkerProperties properties = new DeliveryWorkerProperties();
+        properties.setClaimTimeout(CLAIM_TIMEOUT);
+        return new DeliveryWorker(
+                claimStore,
+                httpClient,
+                properties,
+                new DeliveryRetryPolicy(new DeliveryRetryProperties(), () -> 0.5),
+                Clock.fixed(FIRST_CLAIM_AT, ZoneOffset.UTC)
+        );
     }
 }

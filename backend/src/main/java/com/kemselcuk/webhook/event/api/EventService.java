@@ -16,6 +16,8 @@ import com.kemselcuk.webhook.web.ApiRequestValidationException;
 import com.kemselcuk.webhook.web.DisabledEndpointException;
 import com.kemselcuk.webhook.web.EndpointNotFoundException;
 import com.kemselcuk.webhook.web.IdempotencyKeyConflictException;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.PreparedStatementCallback;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -35,6 +37,7 @@ public class EventService {
     private final EventIdempotencyKeyRepository idempotencyKeyRepository;
     private final CanonicalRequestHasher requestHasher;
     private final ObjectMapper objectMapper;
+    private final JdbcTemplate jdbcTemplate;
 
     public EventService(
             EventRepository eventRepository,
@@ -43,7 +46,8 @@ public class EventService {
             WebhookEndpointRepository endpointRepository,
             EventIdempotencyKeyRepository idempotencyKeyRepository,
             CanonicalRequestHasher requestHasher,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper,
+            JdbcTemplate jdbcTemplate
     ) {
         this.eventRepository = eventRepository;
         this.deliveryRepository = deliveryRepository;
@@ -52,6 +56,7 @@ public class EventService {
         this.idempotencyKeyRepository = idempotencyKeyRepository;
         this.requestHasher = requestHasher;
         this.objectMapper = objectMapper;
+        this.jdbcTemplate = jdbcTemplate;
     }
 
     @Transactional
@@ -64,6 +69,19 @@ public class EventService {
         String idempotencyKey = normalizeIdempotencyKey(requestedIdempotencyKey);
         String requestHash = idempotencyKey == null ? null : requestHasher.hash(request);
         if (idempotencyKey != null) {
+            // A unique constraint protects the table, but a read-then-insert
+            // race would otherwise make one identical request fail with a
+            // constraint violation. Serialize only transactions using this
+            // logical key; the lock is released automatically on commit or
+            // rollback and does not hold a row lock during unrelated work.
+            jdbcTemplate.execute(
+                    "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
+                    (PreparedStatementCallback<Void>) statement -> {
+                        statement.setString(1, idempotencyKey);
+                        statement.execute();
+                        return null;
+                    }
+            );
             EventIdempotencyKey existing = idempotencyKeyRepository
                     .findByIdempotencyKey(idempotencyKey)
                     .orElse(null);

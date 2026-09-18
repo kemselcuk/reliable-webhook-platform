@@ -13,6 +13,7 @@ import com.kemselcuk.webhook.domain.repository.OutboxEventRepository;
 import com.kemselcuk.webhook.domain.repository.WebhookEndpointRepository;
 import com.kemselcuk.webhook.event.api.CreateEventRequest;
 import com.kemselcuk.webhook.event.api.EventService;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -38,6 +39,11 @@ import java.time.Instant;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -94,6 +100,8 @@ class WebhookApiIT {
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
+    private ExecutorService executor;
+
     @BeforeEach
     void clearDatabase() {
         idempotencyKeyRepository.deleteAllInBatch();
@@ -101,6 +109,13 @@ class WebhookApiIT {
         deliveryRepository.deleteAllInBatch();
         eventRepository.deleteAllInBatch();
         endpointRepository.deleteAllInBatch();
+    }
+
+    @AfterEach
+    void stopExecutor() {
+        if (executor != null) {
+            executor.shutdownNow();
+        }
     }
 
     @Test
@@ -330,6 +345,63 @@ class WebhookApiIT {
     }
 
     @Test
+    void concurrentIdenticalIdempotencyKeysCreateOneEventAndReturnTheSameResponse() throws Exception {
+        JsonNode endpoint = createEndpoint("Orders", "https://orders.test/hooks");
+        String endpointId = endpoint.get("id").asText();
+        String body = """
+                {"type":"order.created","payload":{"orderId":"order-123"},"endpointIds":["%s"]}
+                """.formatted(endpointId);
+        String key = "concurrent-identical-key";
+
+        List<ResponseEntity<JsonNode>> responses = concurrentlySubmit(
+                key, body, key, body
+        );
+
+        assertThat(responses).allSatisfy(response -> {
+            assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+            assertThat(response.getHeaders().getLocation()).isEqualTo(
+                    responses.getFirst().getHeaders().getLocation()
+            );
+            assertThat(response.getBody()).isEqualTo(responses.getFirst().getBody());
+        });
+        assertThat(eventRepository.count()).isEqualTo(1);
+        assertThat(deliveryRepository.count()).isEqualTo(1);
+        assertThat(outboxEventRepository.count()).isEqualTo(1);
+        assertThat(idempotencyKeyRepository.count()).isEqualTo(1);
+    }
+
+    @Test
+    void concurrentDifferentPayloadsUseOneWinnerAndReturnAConflictForTheLoser() throws Exception {
+        JsonNode endpoint = createEndpoint("Orders", "https://orders.test/hooks");
+        String endpointId = endpoint.get("id").asText();
+        String firstBody = """
+                {"type":"order.created","payload":{"orderId":"order-123"},"endpointIds":["%s"]}
+                """.formatted(endpointId);
+        String secondBody = """
+                {"type":"order.created","payload":{"orderId":"order-456"},"endpointIds":["%s"]}
+                """.formatted(endpointId);
+        String key = "concurrent-conflicting-key";
+
+        List<ResponseEntity<JsonNode>> responses = concurrentlySubmit(
+                key, firstBody, key, secondBody
+        );
+
+        assertThat(responses).extracting(ResponseEntity::getStatusCode)
+                .containsExactlyInAnyOrder(HttpStatus.CREATED, HttpStatus.CONFLICT);
+        assertThat(responses.stream()
+                .filter(response -> response.getStatusCode() == HttpStatus.CONFLICT)
+                .findFirst()
+                .orElseThrow()
+                .getBody()
+                .get("code")
+                .asText()).isEqualTo("IDEMPOTENCY_KEY_CONFLICT");
+        assertThat(eventRepository.count()).isEqualTo(1);
+        assertThat(deliveryRepository.count()).isEqualTo(1);
+        assertThat(outboxEventRepository.count()).isEqualTo(1);
+        assertThat(idempotencyKeyRepository.count()).isEqualTo(1);
+    }
+
+    @Test
     void outboxInsertFailureRollsBackEventAndDeliveries() throws Exception {
         WebhookEndpoint endpoint = endpointRepository.saveAndFlush(
                 WebhookEndpoint.create("Orders", "https://orders.test/hooks")
@@ -468,6 +540,29 @@ class WebhookApiIT {
                 HttpMethod.POST,
                 new HttpEntity<>(body, headers),
                 JsonNode.class
+        );
+    }
+
+    private List<ResponseEntity<JsonNode>> concurrentlySubmit(
+            String firstKey,
+            String firstBody,
+            String secondKey,
+            String secondBody
+    ) throws Exception {
+        CountDownLatch start = new CountDownLatch(1);
+        executor = Executors.newFixedThreadPool(2);
+        Future<ResponseEntity<JsonNode>> first = executor.submit(() -> {
+            assertThat(start.await(10, TimeUnit.SECONDS)).isTrue();
+            return postWithKey("/api/events", firstKey, firstBody);
+        });
+        Future<ResponseEntity<JsonNode>> second = executor.submit(() -> {
+            assertThat(start.await(10, TimeUnit.SECONDS)).isTrue();
+            return postWithKey("/api/events", secondKey, secondBody);
+        });
+        start.countDown();
+        return List.of(
+                first.get(20, TimeUnit.SECONDS),
+                second.get(20, TimeUnit.SECONDS)
         );
     }
 
