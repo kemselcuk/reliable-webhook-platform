@@ -4,7 +4,7 @@
 
 The platform is a small, fully local webhook delivery system. PostgreSQL is authoritative for business state; Kafka provides asynchronous transport, buffering, and horizontal consumption. A React UI exercises the real HTTP API and shows operational state without becoming a second source of truth.
 
-Phase 5 includes the PostgreSQL persistence foundation, REST/browser event flow, transactional outbox, Kafka publisher, bounded delivery worker, durable retry policy, due-retry requeueing, manual replay, API idempotency, and concurrency hardening. A canonical request hash and stored response reference are persisted with a unique `Idempotency-Key`. Event creation records business state, publish intent, and the idempotency record atomically; the publisher sends compact delivery commands and the worker claims and delivers them asynchronously. Authentication, HMAC signing, and observability remain later-phase behavior.
+Phase 6 includes the PostgreSQL persistence foundation, REST/browser event flow, transactional outbox, Kafka publisher, bounded delivery worker, durable retry policy, due-retry requeueing, manual replay, API idempotency, concurrency hardening, and versioned HMAC signing. A canonical request hash and stored response reference are persisted with a unique `Idempotency-Key`. Event creation records business state, publish intent, and the idempotency record atomically; the publisher sends compact delivery commands and the worker claims and delivers them asynchronously. Webhook endpoint signing material is stored in a separate rotation-ready table and loaded into a redaction-safe detached snapshot only after a delivery claim.
 
 ## Current domain persistence
 
@@ -17,7 +17,7 @@ The V1 migration creates four core tables:
 
 The REST layer returns DTOs and an app-owned page shape. Endpoint URLs are normalized local URI values after validating absolute `http`/`https` scheme, host presence, and the absence of fragments/user-info. Event submission requires a non-empty, unique list of endpoint IDs and creates one `PENDING` delivery per selected enabled endpoint in one transaction. No broadcast or subscription behavior is implied.
 
-Foreign keys and check constraints protect relationships, enum-compatible status values, attempt counts, HTTP status bounds, and attempt timestamp order. Hibernate validates this schema but does not create or update it. Endpoint secrets are intentionally absent from V1; their storage and signing lifecycle remain a Phase 6 security decision.
+Foreign keys and check constraints protect relationships, enum-compatible status values, attempt counts, HTTP status bounds, and attempt timestamp order. Hibernate validates this schema but does not create or update it. Endpoint secrets are stored separately from V1 endpoint response/list data.
 
 The append-only V2 migration adds `outbox_events`. Each row references a delivery and stores the compact JSONB command, availability time, `PENDING`/`CLAIMED`/`PUBLISHED` state, claim token/timestamp, publish-attempt count, bounded failure category, and audit timestamps. Check constraints enforce coherent lease/published fields, while partial indexes support due work and stale-claim scans.
 
@@ -26,6 +26,10 @@ The append-only V3 migration adds `claim_token` and `claimed_at` to `deliveries`
 The append-only V4 migration adds `run_attempt_count` and retry-state coherence to `deliveries`. `attempt_count` is the monotonic lifetime count used to number the complete attempt history; `run_attempt_count` counts attempts since the latest manual replay and is reset only by replay. Both counters are non-negative, and the run count cannot exceed the lifetime count. `RETRY_SCHEDULED` requires a non-null `next_retry_at`; every other delivery status requires it to be null. These constraints keep retry and replay state durable and mutually coherent.
 
 The append-only V5 migration adds `event_idempotency_keys`. Each row stores the opaque key, a SHA-256 hash of the canonical supported event request, the created event reference, and the original response JSON. The key is unique. Event creation also takes a transaction-scoped PostgreSQL advisory lock derived from the normalized key before its read/create decision, so concurrent identical requests serialize across application instances and return the same logical event and response without duplicate events, deliveries, or outbox commands. A hash mismatch, including a concurrently competing payload, is reported as `IDEMPOTENCY_KEY_CONFLICT`. Advisory-hash collisions can only serialize otherwise unrelated keys temporarily; the database constraint remains the final integrity guard.
+
+The append-only V6 migration adds `webhook_endpoint_secrets`. It stores caller-provided UTF-8 secret bytes as `BYTEA`, bounded to 32–512 bytes, with `secret_version`, bounded `key_id`, active state, and a partial unique index enforcing one active row per endpoint. Existing endpoint rows receive one active `v1` secret generated by PostgreSQL's cryptographic extension during migration. The table is deliberately separate from endpoint response/list data and is structured for later history/rotation without implementing a rotation API in this phase.
+
+On a V5-to-V6 upgrade, those existing endpoints therefore receive arbitrary 32-byte material rather than a recoverable UTF-8 string. Operators preserving a local database must run the migration with workers, outbox publishing, and retry scheduling disabled, retrieve the active bytes through privileged database access (base64 is suitable for receiver provisioning), configure receivers, and only then resume delivery. A disposable development volume can instead be recreated and endpoints registered with caller-supplied secrets. Neither path exposes the generated material through the API or logs; the detailed SQL and terminal-output cautions are in [docs/security.md](security.md).
 
 ## Implemented event flow
 
@@ -42,13 +46,15 @@ Polling publisher -> Kafka delivery command -> worker
                      lease/token claim in PostgreSQL
                                       |
                                       v
+                         sign exact UTF-8 body + timestamp
+                                      |
                          external webhook HTTP request
                                       |
                                       v
                      attempt + state transition in PostgreSQL
 ```
 
-Creating an event now persists the event, deliveries, and one outbox command per delivery in one database transaction. The polling publisher moves compact, versioned delivery references to Kafka. The Phase 4 worker validates the command and key, loads current state from PostgreSQL, claims eligible delivery work safely, performs bounded-concurrency HTTP delivery, and persists token-guarded attempts and state transitions.
+Creating an event now persists the event, deliveries, and one outbox command per delivery in one database transaction. The polling publisher moves compact, versioned delivery references to Kafka. The delivery worker validates the command and key, loads current state from PostgreSQL, claims eligible delivery work safely, performs bounded-concurrency HTTP delivery, and persists token-guarded attempts and state transitions.
 
 ## Durability and delivery semantics
 
@@ -60,7 +66,7 @@ The Kafka contract is topic `webhook.delivery.commands.v1`, key `deliveryId`, an
 
 The listener uses String deserializers, manual-immediate acknowledgments, and the configured worker group/concurrency. `SUCCESS`, `FAILED`, terminal, not-found, disabled, ineligible, and stale-completion outcomes are acknowledged. A fresh `PROCESSING` lease is nacked with a short bounded delay so redelivery can recover after lease expiry; malformed, unsupported, and key-mismatched commands are acknowledged as bounded poison input with only topic/partition/offset/category logged. Unexpected listener or infrastructure failures use a bounded fixed-backoff error handler with effectively unlimited attempts.
 
-External HTTP cannot participate in the PostgreSQL transaction. The implemented guarantee is at-least-once delivery: a receiver may observe a request again around worker or network failures. Stable event and delivery identifiers and idempotency guidance help receivers handle that contract; HMAC signing is deferred to Phase 6. Exactly-once delivery is not claimed.
+External HTTP cannot participate in the PostgreSQL transaction. The implemented guarantee is at-least-once delivery: a receiver may observe a request again around worker or network failures. Stable event and delivery identifiers, idempotency guidance, and versioned HMAC signatures help receivers handle that contract. Exactly-once delivery is not claimed.
 
 ## Retry state and failure classification
 
@@ -84,7 +90,7 @@ Manual replay locks the delivery and endpoint row, accepts only enabled `FAILED`
 
 Worker claiming is lease/token based. A single atomic PostgreSQL update permits only one concurrent worker to move an eligible delivery to `PROCESSING`; another worker observes the fresh lease as busy and does not make an HTTP request. A claim records an owner token and claim time; completing or failing work verifies the token so a worker that outlives its lease cannot overwrite a newer worker's state. A worker crash allows a later worker to recover an expired claim. A duplicate command for a `SUCCESS` or other terminal delivery is acknowledged without another HTTP request or attempt record. Retry and replay transitions also clear lease fields defensively before new work is published.
 
-The external HTTP call must not run while a database transaction or row lock is held open. Claiming and completion are short database operations around the external call: acquire a lease, release the transaction, perform HTTP, then persist the result only if the lease token is still valid. The worker sends the JSONB-derived payload as `application/json` (semantic JSON is preserved, but source whitespace/key byte order is not promised) with `Accept: application/json` and stable `X-Webhook-Id` (event UUID), `X-Delivery-Id`, and `X-Webhook-Event` headers. Connect/response timeouts and worker concurrency are bounded by `webhook.delivery.worker`; response bodies are not retained or logged.
+The external HTTP call must not run while a database transaction or row lock is held open. Claiming and completion are short database operations around the external call: acquire a lease, release the transaction, perform HTTP, then persist the result only if the lease token is still valid. The worker loads the active endpoint secret into a detached `SigningSecret` whose `toString()` is redacted, serializes the JSONB-derived payload once to UTF-8 bytes, signs `ASCII(timestamp_seconds) + "." + raw_body`, and sends those same bytes as `application/json`. It sends `Accept: application/json`, stable `X-Webhook-Id` (event UUID), `X-Delivery-Id`, and `X-Webhook-Event`, plus `X-Webhook-Timestamp`, `X-Webhook-Signature: v1=<lowercase-hex>`, and bounded `X-Webhook-Key-Id`. Connect/response timeouts and worker concurrency are bounded by `webhook.delivery.worker`; response bodies are not retained or logged. Receiver verification guidance, constant-time comparison, and the recommended five-minute replay-tolerance window are documented in [docs/security.md](security.md).
 
 ## Operational boundaries
 
@@ -108,7 +114,7 @@ Compose defines four services for the local topology:
 - the Spring Boot backend, built as a non-root Java runtime image;
 - the React build served by an unprivileged nginx image, proxying `/api` to the backend.
 
-The backend and frontend health checks use readiness/HTTP endpoints. Compose dependencies wait for infrastructure and backend health. The Phase 4 backend connects to PostgreSQL and Kafka, runs Flyway, and starts the outbox polling publisher, delivery worker, and durable retry scheduler after the broker is healthy in Compose. Compose enables all three; a host-run backend must set `WEBHOOK_DELIVERY_WORKER_ENABLED=true` and `WEBHOOK_DELIVERY_RETRY_SCHEDULER_ENABLED=true` when retry processing is desired.
+The backend and frontend health checks use readiness/HTTP endpoints. Compose dependencies wait for infrastructure and backend health. The backend connects to PostgreSQL and Kafka, runs Flyway, and starts the outbox polling publisher, delivery worker, and durable retry scheduler after the broker is healthy in Compose. Compose enables all three; a host-run backend must set `WEBHOOK_DELIVERY_WORKER_ENABLED=true` and `WEBHOOK_DELIVERY_RETRY_SCHEDULER_ENABLED=true` when retry processing is desired.
 
 ## Phase boundaries
 

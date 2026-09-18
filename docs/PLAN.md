@@ -21,10 +21,10 @@ The polling publisher may publish a Kafka record and crash before marking its ou
 
 ## Current status
 
-- Current phase: Phase 5 — Idempotency + concurrency safety `[x]` completed and merged to `main` at `84aa612`; main CI run `35368978419` is green
-- Overall status: Phases 0–5 `[x]` completed and merged to `main`
-- Completed: atomic persistence/outbox publishing; crash-safe delivery leases; bounded HTTP delivery; manual-ack Kafka consumption; durable retries and replay; API idempotency with canonical hashing and transaction-scoped per-key serialization; atomic concurrent worker claims; and duplicate Kafka command suppression after terminal completion
-- Next: report the Phase 5 boundary to the user, then wait for authorization before Phase 6
+- Current phase: Phase 6 — HMAC security `[x]` completed on `feature/phase-6-hmac-security`; pending feature push, merge, and green `main` CI verification
+- Overall status: Phases 0–5 `[x]` completed and merged to `main`; Phase 6 implementation and full local verification are complete on the feature branch
+- Completed: durable outbox/retry/replay; API idempotency and concurrency safety; rotation-ready per-endpoint signing secrets; versioned raw-body/timestamp HMAC-SHA256; stable delivery/signature headers; receiver verification guidance; and secret/payload redaction safeguards
+- Next: push the completed Phase 6 feature, verify feature CI, merge to `main`, verify `main` CI, and stop at the phase boundary
 - Environment note: local port `5432` was already occupied during final verification, so the full stack was successfully verified with the documented host-port overrides (`55432/59092/18080/13000`). This does not change container ports or application topology.
 - Intentionally deferred: CDC/Debezium, multi-tenancy, full secret rotation, OpenTelemetry, hosted deployment, and business-state use of a Kafka DLQ
 
@@ -137,20 +137,20 @@ Acceptance criteria:
 - [x] Concurrent workers cannot actively process the same delivery
 - [x] Duplicate Kafka messages do not corrupt or repeat completed work
 
-## Phase 6 — HMAC security `[ ]`
+## Phase 6 — HMAC security `[x]`
 
 Features and tasks:
 
-- [ ] Store a per-endpoint secret using a design that permits later rotation
-- [ ] Sign raw body and timestamp with versioned HMAC-SHA256
-- [ ] Send stable webhook/delivery IDs, timestamp, and signature headers
-- [ ] Document verification and replay-tolerance window
-- [ ] Prevent secret and sensitive-payload logging
+- [x] Store a per-endpoint secret using a design that permits later rotation
+- [x] Sign raw body and timestamp with versioned HMAC-SHA256
+- [x] Send stable webhook/delivery IDs, timestamp, and signature headers
+- [x] Document verification and replay-tolerance window
+- [x] Prevent secret and sensitive-payload logging
 
 Acceptance criteria:
 
-- [ ] Valid signatures verify; body modification invalidates them
-- [ ] Timestamp is part of the signed content and verification samples are documented/tested
+- [x] Valid signatures verify; body modification invalidates them
+- [x] Timestamp is part of the signed content and verification samples are documented/tested
 
 ## Phase 7 — Observability `[ ]`
 
@@ -226,6 +226,14 @@ Acceptance criteria:
 
 `Trade-off: requests sharing a key wait for the current key owner, and the 64-bit PostgreSQL hash can very rarely serialize unrelated colliding keys; collisions affect throughput only, not correctness.`
 
+`Planned: each endpoint would store a signing secret in a design that permits later rotation.`
+
+`Implemented: a separate webhook_endpoint_secrets table stores recoverable 32–512 byte secret material with per-endpoint version/key identifiers, history-capable rows, and a partial unique index allowing exactly one active key. New endpoints accept caller-provided material; V5 upgrades receive cryptographically random 32-byte backfill values.`
+
+`Reason: outbound HMAC calculation requires the original secret bytes, while a separate table keeps material out of endpoint DTOs and compact Kafka commands and provides the schema boundary for future overlapping-key rotation.`
+
+`Trade-off: PostgreSQL and its backups contain recoverable secret material and must be protected. Existing V5 receivers require a controlled provisioning step after backfill; complete rotation workflows and application-level encryption/key management remain deferred.`
+
 Record future material changes as: `Planned`, `Implemented`, `Reason`, and `Trade-off`.
 
 ## Environment notes
@@ -239,3 +247,4 @@ Record future material changes as: `Planned`, `Implemented`, `Reason`, and `Trad
 - Phase 3 final verification used the separate `rwp-phase3-verify` Compose project with fresh volumes and host ports `57432/59096/18084/13004`, plus a temporary local receiver on `18091`. A real API event reached the receiver once with stable headers; PostgreSQL showed `SUCCESS`, one HTTP `204` attempt, and a `PUBLISHED` outbox row. Backend verification passed 18 unit and 29 integration tests; frontend lint, typecheck, 6 tests, production build, and Compose validation passed.
 - Phase 4 acceptance verification passed backend `./mvnw verify` with 41 unit tests and 46 integration tests, including the real PostgreSQL + Kafka + WireMock retry pipeline; frontend lint, typecheck, 6 tests, and production build passed; `docker compose config` passed. Feature and `main` CI are green, and the phase is merged to `main` at `3069c34`.
 - Phase 5 acceptance verification passed backend `./mvnw verify` with 43 unit tests and 51 integration tests, including concurrent API requests, concurrent PostgreSQL-backed workers, and the duplicate Kafka command pipeline; frontend lint, typecheck, 6 tests, and production build passed; `docker compose config --quiet` and `git diff --check` passed. Feature CI run `35368711343` and merged `main` CI run `35368978419` are green; the phase is merged to `main` at `84aa612`.
+- Phase 6 local acceptance verification passed backend `./mvnw verify` with 48 unit tests and 54 integration tests, including V5-to-V6 secret backfill, PostgreSQL constraints, API non-exposure, concurrent claim secret loading, exact WireMock request signing, and the Kafka delivery/retry pipelines; frontend lint, typecheck, 7 tests, and production build passed; `docker compose config --quiet` and `git diff --check` passed.

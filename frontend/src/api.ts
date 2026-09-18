@@ -107,10 +107,10 @@ export function loadEndpoints(
   return request<WebhookEndpointPage>(`/api/webhook-endpoints?page=${page}&size=${size}`, { signal });
 }
 
-export function createEndpoint(name: string, url: string): Promise<WebhookEndpoint> {
+export function createEndpoint(name: string, url: string, secret: string): Promise<WebhookEndpoint> {
   return request<WebhookEndpoint>('/api/webhook-endpoints', {
     method: 'POST',
-    body: JSON.stringify({ name, url }),
+    body: JSON.stringify({ name, url, secret }),
   });
 }
 

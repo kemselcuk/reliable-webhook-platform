@@ -8,7 +8,7 @@ import {
   type HealthResponse,
   type WebhookEndpoint,
 } from './api';
-import { parseJsonPayload } from './api-helpers.js';
+import { parseJsonPayload, signingSecretValidationMessage } from './api-helpers.js';
 import { healthStatusLabel } from './health-status.js';
 
 type HealthState =
@@ -50,7 +50,7 @@ function formatDate(value: string): string {
 export default function App() {
   const [health, setHealth] = useState<HealthState>({ kind: 'loading' });
   const [endpoints, setEndpoints] = useState<EndpointState>({ kind: 'loading' });
-  const [endpointForm, setEndpointForm] = useState({ name: '', url: '' });
+  const [endpointForm, setEndpointForm] = useState({ name: '', url: '', secret: '' });
   const [endpointBusy, setEndpointBusy] = useState(false);
   const [endpointNotice, setEndpointNotice] = useState<Notice>(null);
   const [selectedEndpointIds, setSelectedEndpointIds] = useState<Set<string>>(new Set());
@@ -118,11 +118,17 @@ export default function App() {
 
   async function handleEndpointSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const secretValidationMessage = signingSecretValidationMessage(endpointForm.secret);
+    if (secretValidationMessage) {
+      setEndpointNotice({ kind: 'error', message: secretValidationMessage });
+      return;
+    }
+
     setEndpointBusy(true);
     setEndpointNotice(null);
     try {
-      await createEndpoint(endpointForm.name.trim(), endpointForm.url.trim());
-      setEndpointForm({ name: '', url: '' });
+      await createEndpoint(endpointForm.name.trim(), endpointForm.url.trim(), endpointForm.secret);
+      setEndpointForm({ name: '', url: '', secret: '' });
       setEndpointNotice({ kind: 'success', message: 'Endpoint created and list refreshed.' });
       void refreshEndpoints();
     } catch (error: unknown) {
@@ -225,6 +231,19 @@ export default function App() {
                   autoComplete="url"
                   placeholder="http://localhost:8081/webhooks"
                 />
+              </label>
+              <label>
+                Signing secret
+                <input
+                  value={endpointForm.secret}
+                  onChange={(event) => setEndpointForm({ ...endpointForm, secret: event.target.value })}
+                  maxLength={512}
+                  required
+                  type="password"
+                  autoComplete="new-password"
+                  placeholder="32–512 UTF-8 bytes"
+                />
+                <span className="field-help">Keep this value safe; it is never shown again.</span>
               </label>
             </div>
             <button type="submit" disabled={endpointBusy}>

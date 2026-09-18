@@ -38,6 +38,7 @@ import java.util.UUID;
 import java.time.Instant;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -56,6 +57,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
         properties = "webhook.outbox.publisher.enabled=false"
 )
 class WebhookApiIT {
+
+    private static final String TEST_SECRET = "ssssssssssssssssssssssssssssssss";
 
     @Container
     static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:17-alpine")
@@ -123,7 +126,7 @@ class WebhookApiIT {
         ResponseEntity<JsonNode> createResponse = post(
                 "/api/webhook-endpoints",
                 """
-                {"name":"Orders","url":" https://example.test/a/../webhooks "}
+                {"name":"Orders","url":" https://example.test/a/../webhooks ","secret":"ssssssssssssssssssssssssssssssss"}
                 """
         );
 
@@ -138,7 +141,7 @@ class WebhookApiIT {
         assertThat(createResponse.getBody().get("enabled").asBoolean()).isTrue();
 
         ResponseEntity<JsonNode> paymentsResponse = post("/api/webhook-endpoints", """
-                {"name":"Payments","url":"http://payments.test/hooks"}
+                {"name":"Payments","url":"http://payments.test/hooks","secret":"ssssssssssssssssssssssssssssssss"}
                 """);
         assertThat(paymentsResponse.getStatusCode()).isEqualTo(HttpStatus.CREATED);
         ResponseEntity<JsonNode> listResponse = restTemplate.exchange(
@@ -170,7 +173,7 @@ class WebhookApiIT {
     @Test
     void capsEndpointListSizeAtOneHundred() throws Exception {
         post("/api/webhook-endpoints", """
-                {"name":"Orders","url":"https://orders.test/hooks"}
+                {"name":"Orders","url":"https://orders.test/hooks","secret":"ssssssssssssssssssssssssssssssss"}
                 """);
 
         ResponseEntity<JsonNode> response = restTemplate.exchange(
@@ -188,13 +191,13 @@ class WebhookApiIT {
     @Test
     void rejectsDuplicateEndpointNameWithConflict() throws Exception {
         post("/api/webhook-endpoints", """
-                {"name":"Orders","url":"https://orders.test/hooks"}
+                {"name":"Orders","url":"https://orders.test/hooks","secret":"ssssssssssssssssssssssssssssssss"}
                 """);
 
         ResponseEntity<JsonNode> response = post(
                 "/api/webhook-endpoints",
                 """
-                {"name":"Orders","url":"https://another.test/hooks"}
+                {"name":"Orders","url":"https://another.test/hooks","secret":"ssssssssssssssssssssssssssssssss"}
                 """
         );
 
@@ -209,13 +212,65 @@ class WebhookApiIT {
         ResponseEntity<JsonNode> response = post(
                 "/api/webhook-endpoints",
                 """
-                {"name":"Orders","url":"ftp://example.test/hooks#fragment"}
+                {"name":"Orders","url":"ftp://example.test/hooks#fragment","secret":"ssssssssssssssssssssssssssssssss"}
                 """
         );
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
         assertThat(response.getBody()).isNotNull();
         assertThat(response.getBody().get("code").asText()).isEqualTo("VALIDATION_ERROR");
+        assertThat(endpointRepository.count()).isZero();
+    }
+
+    @Test
+    void storesExactSecretBytesButNeverExposesSecretInEndpointResponses() throws Exception {
+        String secret = "  " + "é".repeat(16) + "  ";
+        ResponseEntity<JsonNode> response = post(
+                "/api/webhook-endpoints",
+                objectMapper.writeValueAsString(Map.of(
+                        "name", "Secret Orders",
+                        "url", "https://orders.test/hooks",
+                        "secret", secret
+                ))
+        );
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().toString()).doesNotContain(secret);
+        UUID endpointId = UUID.fromString(response.getBody().get("id").asText());
+        byte[] stored = jdbcTemplate.queryForObject(
+                "SELECT secret_material FROM webhook_endpoint_secrets WHERE webhook_endpoint_id = ?",
+                byte[].class,
+                endpointId
+        );
+        assertThat(stored).isEqualTo(secret.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+
+        ResponseEntity<JsonNode> list = restTemplate.exchange(
+                url("/api/webhook-endpoints?page=0&size=20"),
+                HttpMethod.GET,
+                HttpEntity.EMPTY,
+                JsonNode.class
+        );
+        assertThat(list.getBody()).isNotNull();
+        assertThat(list.getBody().toString()).doesNotContain(secret);
+    }
+
+    @Test
+    void rejectsSecretsOutsideUtf8ByteBoundsWithoutReturningMaterial() throws Exception {
+        String oversized = "é".repeat(257);
+        ResponseEntity<JsonNode> response = post(
+                "/api/webhook-endpoints",
+                objectMapper.writeValueAsString(Map.of(
+                        "name", "Oversized Secret",
+                        "url", "https://orders.test/hooks",
+                        "secret", oversized
+                ))
+        );
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().get("code").asText()).isEqualTo("VALIDATION_ERROR");
+        assertThat(response.getBody().toString()).doesNotContain(oversized);
         assertThat(endpointRepository.count()).isZero();
     }
 
@@ -519,7 +574,9 @@ class WebhookApiIT {
     private JsonNode createEndpoint(String name, String endpointUrl) throws Exception {
         ResponseEntity<JsonNode> response = post(
                 "/api/webhook-endpoints",
-                objectMapper.writeValueAsString(java.util.Map.of("name", name, "url", endpointUrl))
+                objectMapper.writeValueAsString(java.util.Map.of(
+                        "name", name, "url", endpointUrl, "secret", TEST_SECRET
+                ))
         );
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
         return response.getBody();

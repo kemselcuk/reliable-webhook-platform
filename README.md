@@ -2,7 +2,7 @@
 
 Reliable Webhook Platform is a local-first Spring Boot and React workspace for exploring durable, asynchronous webhook delivery. The long-term design uses PostgreSQL as the source of truth and Apache Kafka as the transport between durable work state and delivery workers.
 
-Phase 4 currently provides the repository foundation, durable retry processing, manual replay, and an asynchronous delivery worker:
+Phase 6 currently provides the repository foundation, durable retry processing, manual replay, concurrency-safe asynchronous delivery, and versioned HMAC webhook signing:
 
 - a Java 21 / Spring Boot 3.5.16 backend;
 - a small React + TypeScript + Vite frontend;
@@ -10,7 +10,7 @@ Phase 4 currently provides the repository foundation, durable retry processing, 
 - a frontend health card with loading, healthy, and error states;
 - PostgreSQL 17 and single-node Apache Kafka 4.3.1 Compose services;
 - Dockerfiles, readiness health checks, and GitHub Actions checks;
-- a Flyway-managed PostgreSQL schema for webhook endpoints, events, deliveries, and delivery attempts;
+- a Flyway-managed PostgreSQL schema for webhook endpoints, rotation-ready signing secrets, events, deliveries, and delivery attempts;
 - Spring Data JPA repositories with JSONB event payload mapping and database constraints;
 - atomic `Event + Delivery + OutboxEvent` creation in one PostgreSQL transaction;
 - a lease/token-based polling publisher that sends compact delivery commands to Kafka;
@@ -21,9 +21,9 @@ Phase 4 currently provides the repository foundation, durable retry processing, 
 - PostgreSQL retry state and a polling scheduler that requeues due deliveries through the transactional outbox;
 - `DEAD` transition after the retry budget is exhausted and an atomic manual replay API for terminal failures;
 - PostgreSQL, Kafka, and WireMock integration coverage for the complete asynchronous API-to-webhook flow;
-- a minimal browser workflow for endpoint registration/listing and event submission to selected endpoints.
+- a minimal browser workflow for endpoint registration/listing (including one-time secret entry) and event submission to selected endpoints.
 
-API idempotency, HMAC signing, authentication, metrics, and the remaining delivery-detail UI are later-phase work. The current REST flow durably records publish intent, publishes a compact delivery reference to Kafka, and asynchronously sends the event payload to the configured webhook endpoint.
+Authentication, metrics, and the remaining delivery-detail UI are later-phase work. The current REST flow durably records publish intent, publishes a compact delivery reference to Kafka, and asynchronously sends the event payload to the configured webhook endpoint with a versioned HMAC signature.
 
 ## Repository layout
 
@@ -41,7 +41,7 @@ compose.yaml   local PostgreSQL, Kafka, backend, and frontend stack
 - Node.js 22 and npm 10 (or compatible current LTS versions)
 - Docker Engine/Desktop with Compose v2
 
-No paid service, cloud account, or real secret is needed. Copy `.env.example` to `.env` only when you want to override the documented local defaults; the checked-in example contains local development credentials only.
+No paid service or cloud account is needed. Endpoint signing secrets are local application data; use a distinct development value and do not commit real production secrets. Copy `.env.example` to `.env` only when you want to override the documented local defaults; the checked-in example contains local development credentials only.
 
 ## Run the foundation locally
 
@@ -87,7 +87,7 @@ Create and list webhook endpoints:
 ```bash
 curl -i -X POST http://localhost:8080/api/webhook-endpoints \
   -H 'Content-Type: application/json' \
-  -d '{"name":"Orders","url":"http://localhost:8081/webhooks"}'
+  -d '{"name":"Orders","url":"http://localhost:8081/webhooks","secret":"replace-with-at-least-32-bytes-of-secret-material"}'
 curl 'http://localhost:8080/api/webhook-endpoints?page=0&size=20'
 ```
 
@@ -100,15 +100,26 @@ curl -i -X POST http://localhost:8080/api/events \
   -d '{"type":"order.created","payload":{"orderId":"order-123"},"endpointIds":["<endpoint-uuid>"]}'
 ```
 
-Endpoint creation returns `201 Created` with a `Location` header. Event creation atomically stores the event, one `PENDING` delivery per selected endpoint, one `PENDING` outbox command per delivery, and (when supplied) the idempotency record. Reusing an `Idempotency-Key` with the same logical request, including concurrently, returns the originally stored `201` response without creating more rows. Request object-key order, numeric formatting, endpoint selection order, and surrounding event-type whitespace do not change the logical request hash. Reusing a key with a different request returns an RFC 9457 `409 Conflict` response with code `IDEMPOTENCY_KEY_CONFLICT`; concurrent requests using the same key are serialized by a transaction-scoped PostgreSQL advisory lock. The polling publisher claims due outbox rows, publishes `{"version":1,"deliveryId":"..."}` using the delivery ID as Kafka key, and marks acknowledged rows `PUBLISHED`. The enabled worker validates the command key/version, atomically claims the current delivery lease, loads the current JSONB payload and endpoint, sends the request outside the database transaction, and records the token-guarded outcome. Concurrent workers cannot actively process the same delivery, and a duplicate command received after terminal completion is acknowledged without another HTTP request. Invalid requests and endpoint lookup/state failures use RFC 9457 `application/problem+json` responses with a stable `code` property.
+Endpoint creation returns `201 Created` with a `Location` header. The caller-supplied signing secret must be between 32 and 512 UTF-8 bytes; it is preserved exactly, stored only in the separate rotation-ready secret table, and never returned by the API. Event creation atomically stores the event, one `PENDING` delivery per selected endpoint, one `PENDING` outbox command per delivery, and (when supplied) the idempotency record. Reusing an `Idempotency-Key` with the same logical request, including concurrently, returns the originally stored `201` response without creating more rows. Request object-key order, numeric formatting, endpoint selection order, and surrounding event-type whitespace do not change the logical request hash. Reusing a key with a different request returns an RFC 9457 `409 Conflict` response with code `IDEMPOTENCY_KEY_CONFLICT`; concurrent requests using the same key are serialized by a transaction-scoped PostgreSQL advisory lock. The polling publisher claims due outbox rows, publishes `{"version":1,"deliveryId":"..."}` using the delivery ID as Kafka key, and marks acknowledged rows `PUBLISHED`. The enabled worker validates the command key/version, atomically claims the current delivery lease, loads the current JSONB payload, endpoint, and active signing key, sends the request outside the database transaction, and records the token-guarded outcome. Concurrent workers cannot actively process the same delivery, and a duplicate command received after terminal completion is acknowledged without another HTTP request. Invalid requests and endpoint lookup/state failures use RFC 9457 `application/problem+json` responses with a stable `code` property.
 
 The worker sends the JSONB-derived payload as `application/json` and requests JSON responses. JSON semantics are preserved, but the original request's whitespace and object-key byte order are not promised. It sends these stable headers:
 
 - `X-Webhook-Id`: event UUID;
 - `X-Delivery-Id`: delivery UUID;
 - `X-Webhook-Event`: event type.
+- `X-Webhook-Timestamp`: ASCII Unix seconds used in the signature input;
+- `X-Webhook-Signature`: `v1=<lowercase-hex-HMAC-SHA256>`;
+- `X-Webhook-Key-Id`: bounded active key identifier, currently `v1`.
 
-HMAC signatures and a timestamp header are deferred to Phase 6. A `2xx` response becomes `SUCCESS`. `429`, `5xx`, and bounded transport failures are retryable; other non-2xx responses, including redirects and permanent `4xx` responses, become `FAILED` without unnecessary retry.
+A `2xx` response becomes `SUCCESS`. `429`, `5xx`, and bounded transport failures are retryable; other non-2xx responses, including redirects and permanent `4xx` responses, become `FAILED` without unnecessary retry.
+
+The exact signing input is the ASCII Unix-seconds timestamp, a literal `.`, and the exact UTF-8 request body bytes:
+
+```text
+ASCII(str(timestamp_seconds)) + b"." + raw_body_bytes
+```
+
+Receivers must verify the signature over the raw body before parsing or reserializing JSON, compare the expected and supplied values in constant time, and reject timestamps outside a recommended five-minute replay-tolerance window. See [docs/security.md](docs/security.md) for receiver verification pseudocode, a runnable Python sample, secret-storage caveats, and the rotation/key-ID boundary.
 
 ### Durable retry and replay
 
@@ -208,4 +219,4 @@ Use a focused `feature/`, `fix/`, `refactor/`, or `docs/` branch for meaningful 
 
 ## Current limitations
 
-HMAC signing and authentication (Phase 6), Prometheus/Grafana observability (Phase 7), the remaining delivery-detail/replay UI (Phase 8), and hosted deployment remain later or intentionally deferred work. The outbox and worker are both at-least-once: a crash around Kafka acknowledgement or external HTTP completion can produce duplicate commands or requests. Lease expiry and claim tokens prevent stale workers from overwriting newer state, and a duplicate command received after `SUCCESS` is terminal and does not resend the request. HTTP connect/response timeouts and worker concurrency are bounded by `webhook.delivery.worker` properties.
+Authentication (beyond webhook signing), Prometheus/Grafana observability (Phase 7), the remaining delivery-detail/replay UI (Phase 8), and hosted deployment remain later or intentionally deferred work. The outbox and worker are both at-least-once: a crash around Kafka acknowledgement or external HTTP completion can produce duplicate commands or requests. Lease expiry and claim tokens prevent stale workers from overwriting newer state, and a duplicate command received after `SUCCESS` is terminal and does not resend the request. HTTP connect/response timeouts and worker concurrency are bounded by `webhook.delivery.worker` properties.

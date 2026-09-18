@@ -9,6 +9,9 @@ public record CreateWebhookEndpointRequest(
         String name,
         @NotBlank(message = "url must not be blank")
         @Size(max = 2048, message = "url must be at most 2048 characters")
-        String url
+        String url,
+        @NotBlank(message = "secret must not be blank")
+        @Size(max = 512, message = "secret must be at most 512 characters")
+        String secret
 ) {
 }

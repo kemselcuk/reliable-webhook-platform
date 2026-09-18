@@ -3,6 +3,8 @@ package com.kemselcuk.webhook.delivery;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.core.Options;
+import com.kemselcuk.webhook.security.SigningSecret;
+import com.kemselcuk.webhook.security.WebhookSignature;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -10,7 +12,11 @@ import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
 
 import java.net.http.HttpClient;
+import java.nio.charset.StandardCharsets;
+import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.UUID;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
@@ -23,12 +29,16 @@ class RestClientDeliveryHttpClientIT {
 
     private WireMockServer wireMock;
     private RestClientDeliveryHttpClient client;
+    private static final Instant SIGNING_TIME = Instant.parse("2026-09-19T10:15:30Z");
+    private static final SigningSecret SECRET = SigningSecret.fromText("s".repeat(32));
 
     @BeforeEach
     void startServer() {
         wireMock = new WireMockServer(Options.DYNAMIC_PORT);
         wireMock.start();
-        client = new RestClientDeliveryHttpClient(restClient(Duration.ofSeconds(2)));
+        client = new RestClientDeliveryHttpClient(
+                restClient(Duration.ofSeconds(2)), Clock.fixed(SIGNING_TIME, ZoneOffset.UTC)
+        );
     }
 
     @AfterEach
@@ -57,7 +67,15 @@ class RestClientDeliveryHttpClientIT {
                 .withHeader("Accept", equalTo("application/json"))
                 .withHeader("X-Webhook-Id", equalTo(eventId.toString()))
                 .withHeader("X-Delivery-Id", equalTo(deliveryId.toString()))
-                .withHeader("X-Webhook-Event", equalTo("order.created")));
+                .withHeader("X-Webhook-Event", equalTo("order.created"))
+                .withHeader("X-Webhook-Timestamp", equalTo("1789812930"))
+                .withHeader("X-Webhook-Signature", equalTo(WebhookSignature.sign(
+                        SECRET,
+                        SIGNING_TIME,
+                        "{\"orderId\":\"order-123\",\"items\":[1,2]}"
+                                .getBytes(StandardCharsets.UTF_8)
+                )))
+                .withHeader("X-Webhook-Key-Id", equalTo("v1")));
     }
 
     @Test
@@ -90,7 +108,7 @@ class RestClientDeliveryHttpClientIT {
     void responseTimeoutIsBoundedAndClassified() {
         Duration timeout = Duration.ofMillis(150);
         RestClientDeliveryHttpClient timeoutClient = new RestClientDeliveryHttpClient(
-                restClient(timeout)
+                restClient(timeout), Clock.fixed(SIGNING_TIME, ZoneOffset.UTC)
         );
         wireMock.stubFor(com.github.tomakehurst.wiremock.client.WireMock.post(urlEqualTo("/slow"))
                 .willReturn(aResponse().withStatus(200).withFixedDelay(1_000)));
@@ -130,7 +148,10 @@ class RestClientDeliveryHttpClientIT {
                     url,
                     true,
                     UUID.randomUUID(),
-                    1
+                    1,
+                    1,
+                    "v1",
+                    SECRET
             );
         } catch (Exception exception) {
             throw new AssertionError(exception);

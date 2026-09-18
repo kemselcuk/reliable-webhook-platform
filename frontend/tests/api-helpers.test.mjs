@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   parseJsonPayload,
   parseProblemDetail,
+  signingSecretValidationMessage,
   userMessageForProblem,
 } from '../src/api-helpers.js';
 
@@ -40,4 +41,16 @@ test('turns a known ProblemDetail into a bounded actionable message', () => {
 test('uses a generic message for unknown or malformed problems', () => {
   assert.equal(userMessageForProblem(parseProblemDetail({ code: 'INTERNAL_ERROR', detail: 'stack trace' }), 'Try again'), 'Try again');
   assert.equal(userMessageForProblem(parseProblemDetail('not a problem'), 'Try again'), 'Try again');
+});
+
+test('validates endpoint secrets by UTF-8 byte length without exposing material', () => {
+  assert.equal(signingSecretValidationMessage('é'.repeat(16)), null);
+  assert.equal(
+    signingSecretValidationMessage('s'.repeat(31)),
+    'Signing secret must contain between 32 and 512 UTF-8 bytes.',
+  );
+  assert.equal(
+    signingSecretValidationMessage('é'.repeat(257)),
+    'Signing secret must contain between 32 and 512 UTF-8 bytes.',
+  );
 });

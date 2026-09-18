@@ -287,6 +287,7 @@ class DeliveryRetryPipelineIT {
                 objectMapper.createObjectNode()
                         .put("name", name)
                         .put("url", wireMock.baseUrl() + path)
+                        .put("secret", "ssssssssssssssssssssssssssssssss")
         );
         assertThat(endpointResponse.getStatusCode().value()).isEqualTo(201);
         UUID endpointId = UUID.fromString(endpointResponse.getBody().get("id").asText());

@@ -1,6 +1,7 @@
 package com.kemselcuk.webhook.endpoint.api;
 
 import com.kemselcuk.webhook.domain.WebhookEndpoint;
+import com.kemselcuk.webhook.security.SigningSecret;
 import com.kemselcuk.webhook.domain.repository.WebhookEndpointRepository;
 import com.kemselcuk.webhook.web.ApiRequestValidationException;
 import com.kemselcuk.webhook.web.EndpointNameConflictException;
@@ -29,6 +30,7 @@ public class WebhookEndpointService {
     public WebhookEndpointResponse create(CreateWebhookEndpointRequest request) {
         String name = request.name().trim();
         String normalizedUrl = normalizeUrl(request.url());
+        SigningSecret secret = parseSecret(request.secret());
 
         if (endpointRepository.existsByName(name)) {
             throw new EndpointNameConflictException();
@@ -36,12 +38,29 @@ public class WebhookEndpointService {
 
         try {
             WebhookEndpoint endpoint = endpointRepository.saveAndFlush(
-                    WebhookEndpoint.create(name, normalizedUrl)
+                    WebhookEndpoint.create(name, normalizedUrl, secret)
             );
             return toResponse(endpoint);
         } catch (DataIntegrityViolationException exception) {
             // The database unique constraint closes the concurrent-create race.
             throw new EndpointNameConflictException();
+        }
+    }
+
+    private static SigningSecret parseSecret(String value) {
+        if (value == null) {
+            throw new ApiRequestValidationException(
+                    "secret", "must contain between " + SigningSecret.MIN_BYTES
+                            + " and " + SigningSecret.MAX_BYTES + " UTF-8 bytes"
+            );
+        }
+        try {
+            return SigningSecret.fromText(value);
+        } catch (IllegalArgumentException exception) {
+            throw new ApiRequestValidationException(
+                    "secret", "must contain between " + SigningSecret.MIN_BYTES
+                            + " and " + SigningSecret.MAX_BYTES + " UTF-8 bytes"
+            );
         }
     }
 

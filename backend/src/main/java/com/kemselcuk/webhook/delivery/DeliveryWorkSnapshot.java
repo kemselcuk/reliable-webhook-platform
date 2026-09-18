@@ -1,6 +1,7 @@
 package com.kemselcuk.webhook.delivery;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.kemselcuk.webhook.security.SigningSecret;
 
 import java.util.Objects;
 import java.util.UUID;
@@ -21,27 +22,10 @@ public record DeliveryWorkSnapshot(
         boolean endpointEnabled,
         UUID claimToken,
         int nextAttemptNumber,
-        int currentRunAttemptNumber
+        int currentRunAttemptNumber,
+        String signingKeyId,
+        SigningSecret signingSecret
 ) {
-
-    /** Compatibility constructor for callers created before retry state. */
-    public DeliveryWorkSnapshot(
-            UUID deliveryId,
-            UUID eventId,
-            UUID endpointId,
-            String eventType,
-            JsonNode payload,
-            String endpointUrl,
-            boolean endpointEnabled,
-            UUID claimToken,
-            int nextAttemptNumber
-    ) {
-        this(
-                deliveryId, eventId, endpointId, eventType, payload, endpointUrl,
-                endpointEnabled, claimToken, nextAttemptNumber, nextAttemptNumber
-        );
-    }
-
     public DeliveryWorkSnapshot {
         deliveryId = Objects.requireNonNull(deliveryId, "deliveryId");
         eventId = Objects.requireNonNull(eventId, "eventId");
@@ -50,12 +34,27 @@ public record DeliveryWorkSnapshot(
         payload = Objects.requireNonNull(payload, "payload").deepCopy();
         endpointUrl = requireText(endpointUrl, "endpointUrl");
         claimToken = Objects.requireNonNull(claimToken, "claimToken");
+        signingKeyId = requireText(signingKeyId, "signingKeyId");
+        signingSecret = Objects.requireNonNull(signingSecret, "signingSecret");
         if (nextAttemptNumber < 1) {
             throw new IllegalArgumentException("nextAttemptNumber must be positive");
         }
         if (currentRunAttemptNumber < 1) {
             throw new IllegalArgumentException("currentRunAttemptNumber must be positive");
         }
+    }
+
+    /** Keep accidental diagnostic logging free of payloads, claim tokens, and signing material. */
+    @Override
+    public String toString() {
+        return "DeliveryWorkSnapshot{" +
+                "deliveryId=" + deliveryId +
+                ", eventId=" + eventId +
+                ", endpointId=" + endpointId +
+                ", endpointEnabled=" + endpointEnabled +
+                ", nextAttemptNumber=" + nextAttemptNumber +
+                ", currentRunAttemptNumber=" + currentRunAttemptNumber +
+                '}';
     }
 
     /**
