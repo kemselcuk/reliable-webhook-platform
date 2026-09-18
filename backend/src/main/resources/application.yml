@@ -67,6 +67,11 @@ webhook:
       concurrency: ${WEBHOOK_DELIVERY_WORKER_CONCURRENCY:3}
       group-id: ${WEBHOOK_DELIVERY_WORKER_GROUP_ID:webhook-delivery-workers-v1}
       busy-redelivery-delay: ${WEBHOOK_DELIVERY_WORKER_BUSY_REDELIVERY_DELAY:PT0.5S}
+    retry:
+      max-attempts: ${WEBHOOK_DELIVERY_RETRY_MAX_ATTEMPTS:5}
+      initial-delay: ${WEBHOOK_DELIVERY_RETRY_INITIAL_DELAY:PT1S}
+      max-delay: ${WEBHOOK_DELIVERY_RETRY_MAX_DELAY:PT1H}
+      jitter-factor: ${WEBHOOK_DELIVERY_RETRY_JITTER_FACTOR:0.20}
   outbox:
     publisher:
       enabled: ${WEBHOOK_OUTBOX_PUBLISHER_ENABLED:true}
