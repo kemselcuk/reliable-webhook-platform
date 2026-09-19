@@ -120,4 +120,4 @@ Do not treat an internally completed coding increment as a completed phase; the 
 
 ## Current recovery point
 
-At the latest update, Phases 0–7 are complete. Phase 7 is merged to `main` at `8556cf8`, full local verification passed, and main CI run `35447638902` is green. Stop at this phase boundary and wait for explicit user direction before starting Phase 8. Re-read `docs/PLAN.md` and Git history for the exact branch and commit state.
+At the latest update, Phases 0–8 are complete. Phase 8 is merged to `main` at `566623d`, full local and browser acceptance verification passed, and main CI run `35466213190` is green. Stop at this phase boundary and wait for explicit user direction before starting Phase 9. Re-read `docs/PLAN.md` and Git history for the exact branch and commit state.
