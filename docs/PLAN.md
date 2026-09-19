@@ -21,10 +21,10 @@ The polling publisher may publish a Kafka record and crash before marking its ou
 
 ## Current status
 
-- Current phase: Phase 6 — HMAC security `[x]` completed and merged to `main` at `ea659b9`; main CI run `35407250000` is green
-- Overall status: Phases 0–6 `[x]` completed and merged to `main`
-- Completed: durable outbox/retry/replay; API idempotency and concurrency safety; rotation-ready per-endpoint signing secrets; versioned raw-body/timestamp HMAC-SHA256; stable delivery/signature headers; receiver verification guidance; and secret/payload redaction safeguards
-- Next: report the Phase 6 boundary to the user, then wait for authorization before Phase 7
+- Current phase: Phase 7 — Observability `[x]` locally completed on `feature/phase-7-observability`; feature CI and merge verification remain
+- Overall status: Phases 0–6 `[x]` completed and merged to `main`; Phase 7 `[x]` locally verified pending merge
+- Completed: durable outbox/retry/replay; API idempotency and concurrency safety; HMAC security; ECS correlation logs; bounded delivery/retry/backlog/latency/Kafka-lag metrics; and a fully local Prometheus/Grafana dashboard
+- Next: commit and push the Phase 7 feature, verify feature CI, merge to `main`, and verify `main` CI before reporting the phase boundary
 - Environment note: local port `5432` was already occupied during final verification, so the full stack was successfully verified with the documented host-port overrides (`55432/59092/18080/13000`). This does not change container ports or application topology.
 - Intentionally deferred: CDC/Debezium, multi-tenancy, full secret rotation, OpenTelemetry, hosted deployment, and business-state use of a Kafka DLQ
 
@@ -152,20 +152,20 @@ Acceptance criteria:
 - [x] Valid signatures verify; body modification invalidates them
 - [x] Timestamp is part of the signed content and verification samples are documented/tested
 
-## Phase 7 — Observability `[ ]`
+## Phase 7 — Observability `[x]`
 
 Features and tasks:
 
-- [ ] Add Actuator, Micrometer, Prometheus, and Grafana
-- [ ] Add structured logs with event/delivery correlation and redaction
-- [ ] Add bounded-cardinality throughput, outcome, retry, dead, latency, backlog, and consumer-lag metrics
-- [ ] Add a useful local Grafana dashboard
-- [ ] Reassess OpenTelemetry only if cross-boundary trace context adds demonstrable value
+- [x] Add Actuator, Micrometer, Prometheus, and Grafana
+- [x] Add structured logs with event/delivery correlation and redaction
+- [x] Add bounded-cardinality throughput, outcome, retry, dead, latency, backlog, and consumer-lag metrics
+- [x] Add a useful local Grafana dashboard
+- [x] Reassess OpenTelemetry only if cross-boundary trace context adds demonstrable value
 
 Acceptance criteria:
 
-- [ ] Grafana shows system health and delivery behavior from local Compose
-- [ ] Retry/failure/load scenarios visibly affect the expected metrics without high-cardinality labels
+- [x] Grafana shows system health and delivery behavior from local Compose
+- [x] Retry/failure/load scenarios visibly affect the expected metrics without high-cardinality labels
 
 ## Phase 8 — Frontend completion `[ ]`
 
@@ -248,3 +248,4 @@ Record future material changes as: `Planned`, `Implemented`, `Reason`, and `Trad
 - Phase 4 acceptance verification passed backend `./mvnw verify` with 41 unit tests and 46 integration tests, including the real PostgreSQL + Kafka + WireMock retry pipeline; frontend lint, typecheck, 6 tests, and production build passed; `docker compose config` passed. Feature and `main` CI are green, and the phase is merged to `main` at `3069c34`.
 - Phase 5 acceptance verification passed backend `./mvnw verify` with 43 unit tests and 51 integration tests, including concurrent API requests, concurrent PostgreSQL-backed workers, and the duplicate Kafka command pipeline; frontend lint, typecheck, 6 tests, and production build passed; `docker compose config --quiet` and `git diff --check` passed. Feature CI run `35368711343` and merged `main` CI run `35368978419` are green; the phase is merged to `main` at `84aa612`.
 - Phase 6 acceptance verification passed backend `./mvnw verify` with 48 unit tests and 54 integration tests, including V5-to-V6 secret backfill, PostgreSQL constraints, API non-exposure, concurrent claim secret loading, exact WireMock request signing, and the Kafka delivery/retry pipelines; frontend lint, typecheck, 7 tests, and production build passed; `docker compose config --quiet` and `git diff --check` passed. Feature CI run `35407088320` and merged `main` CI run `35407250000` are green; the phase is merged to `main` at `ea659b9`.
+- Phase 7 local acceptance verification passed backend `./mvnw verify` with 51 unit tests and 55 integration tests; frontend lint, typecheck, 7 tests, and production build; Compose, Prometheus, and dashboard syntax checks; and a fresh six-service isolated Compose run. Five forced connection-failure events produced 20 durable retry transitions, 5 `DEAD` transitions, a zero final retry backlog, HTTP latency samples, correlated ECS logs without payload/secret material, a healthy Prometheus target, and a provisioned Grafana dashboard. Host ports `58432/59097/18087/13007/19090/23001` avoided occupied local ports; verification containers/network were removed and the isolated named volumes were preserved.

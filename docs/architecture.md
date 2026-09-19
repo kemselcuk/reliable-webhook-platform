@@ -4,7 +4,7 @@
 
 The platform is a small, fully local webhook delivery system. PostgreSQL is authoritative for business state; Kafka provides asynchronous transport, buffering, and horizontal consumption. A React UI exercises the real HTTP API and shows operational state without becoming a second source of truth.
 
-Phase 6 includes the PostgreSQL persistence foundation, REST/browser event flow, transactional outbox, Kafka publisher, bounded delivery worker, durable retry policy, due-retry requeueing, manual replay, API idempotency, concurrency hardening, and versioned HMAC signing. A canonical request hash and stored response reference are persisted with a unique `Idempotency-Key`. Event creation records business state, publish intent, and the idempotency record atomically; the publisher sends compact delivery commands and the worker claims and delivers them asynchronously. Webhook endpoint signing material is stored in a separate rotation-ready table and loaded into a redaction-safe detached snapshot only after a delivery claim.
+Phase 7 includes the PostgreSQL persistence foundation, REST/browser event flow, transactional outbox, Kafka publisher, bounded delivery worker, durable retry policy, due-retry requeueing, manual replay, API idempotency, concurrency hardening, versioned HMAC signing, and local observability. A canonical request hash and stored response reference are persisted with a unique `Idempotency-Key`. Event creation records business state, publish intent, and the idempotency record atomically; the publisher sends compact delivery commands and the worker claims and delivers them asynchronously. Webhook endpoint signing material is stored in a separate rotation-ready table and loaded into a redaction-safe detached snapshot only after a delivery claim.
 
 ## Current domain persistence
 
@@ -94,7 +94,19 @@ The external HTTP call must not run while a database transaction or row lock is 
 
 ## Operational boundaries
 
-Actuator health endpoints are available in Phase 0. Later observability work should add bounded-cardinality metrics and structured, redacted logs. Event IDs, delivery IDs, full URLs, secrets, and payloads must not become metric labels or accidental log content. PostgreSQL and Kafka remain local and free to run; no hosted service is required.
+Actuator exposes health, liveness/readiness, info, and Prometheus metrics, with
+health details hidden from HTTP responses. ECS structured console logs carry
+only scoped `event_id` and `delivery_id` correlation where available. Metrics
+use finite outcome/status-class labels only: event and delivery throughput,
+claim/outcome/retry/DEAD counters, HTTP duration, outbox and retry backlog, and
+an aggregate Kafka consumer lag gauge are documented in
+[observability.md](observability.md). Event IDs, delivery IDs, full URLs,
+secrets, payloads, and exception text never become metric labels or log
+content. Kafka topic/partition/offset may appear only in bounded poison-command
+diagnostic logs; they never become metric labels. Prometheus and Grafana are local Compose services with a
+provisioned dashboard. OpenTelemetry remains deferred because this deployment
+has no demonstrated cross-boundary trace consumer; reconsider it when
+independent services or receiver-side trace propagation are introduced.
 
 ## Kafka bootstrap addresses
 
@@ -107,12 +119,14 @@ The controller listener remains internal to the single-node KRaft broker. The ba
 
 ## Local topology
 
-Compose defines four services for the local topology:
+Compose defines six services for the local topology:
 
 - PostgreSQL 17-alpine with a named data volume;
 - official Apache Kafka 4.3.1 in single-node KRaft mode with a named data volume;
 - the Spring Boot backend, built as a non-root Java runtime image;
-- the React build served by an unprivileged nginx image, proxying `/api` to the backend.
+- the React build served by an unprivileged nginx image, proxying `/api` to the backend;
+- Prometheus with a named local data volume scraping `/actuator/prometheus`;
+- Grafana with a named local data volume and provisioned Prometheus datasource/dashboard.
 
 The backend and frontend health checks use readiness/HTTP endpoints. Compose dependencies wait for infrastructure and backend health. The backend connects to PostgreSQL and Kafka, runs Flyway, and starts the outbox polling publisher, delivery worker, and durable retry scheduler after the broker is healthy in Compose. Compose enables all three; a host-run backend must set `WEBHOOK_DELIVERY_WORKER_ENABLED=true` and `WEBHOOK_DELIVERY_RETRY_SCHEDULER_ENABLED=true` when retry processing is desired.
 
