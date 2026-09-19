@@ -37,7 +37,7 @@ class WebhookEndpointSecretUpgradeIT {
         UUID endpointId = UUID.randomUUID();
         insertPreV6Endpoint(endpointId);
 
-        Flyway throughV6 = flyway(null);
+        Flyway throughV6 = flyway(MigrationVersion.fromVersion("6"));
         throughV6.migrate();
         assertThat(throughV6.info().current().getVersion())
                 .isEqualTo(MigrationVersion.fromVersion("6"));

@@ -5,6 +5,7 @@ import com.kemselcuk.webhook.security.SigningSecret;
 import com.kemselcuk.webhook.domain.repository.WebhookEndpointRepository;
 import com.kemselcuk.webhook.web.ApiRequestValidationException;
 import com.kemselcuk.webhook.web.EndpointNameConflictException;
+import com.kemselcuk.webhook.web.EndpointNotFoundException;
 import com.kemselcuk.webhook.web.InvalidEndpointUrlException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
@@ -14,6 +15,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.net.URI;
+import java.util.UUID;
 
 @Service
 public class WebhookEndpointService {
@@ -90,6 +92,19 @@ public class WebhookEndpointService {
                 endpointPage.getTotalElements(),
                 endpointPage.getTotalPages()
         );
+    }
+
+    @Transactional
+    public WebhookEndpointResponse setEnabled(UUID endpointId, Boolean enabled) {
+        WebhookEndpoint endpoint = endpointRepository.findById(endpointId)
+                .orElseThrow(EndpointNotFoundException::new);
+        if (Boolean.TRUE.equals(enabled)) {
+            endpoint.enable();
+        } else {
+            endpoint.disable();
+        }
+        endpointRepository.flush();
+        return toResponse(endpoint);
     }
 
     private static WebhookEndpointResponse toResponse(WebhookEndpoint endpoint) {
