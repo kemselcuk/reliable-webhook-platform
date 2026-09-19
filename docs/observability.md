@@ -21,6 +21,13 @@ uses the Prometheus datasource. The default local Grafana credentials are
 `GRAFANA_ADMIN_PASSWORD` for a local override. Do not use the defaults outside
 an isolated development environment.
 
+Readiness includes the PostgreSQL health indicator because the API cannot make
+its atomic durable commit without the database. Kafka health is intentionally
+not part of readiness after startup: an outage leaves publish intent safely in
+the outbox while the API can continue accepting work, and publishing resumes
+after broker recovery. Liveness remains process-local so a dependency outage
+does not create a restart loop.
+
 Start the monitoring services with the rest of the local stack:
 
 ```bash

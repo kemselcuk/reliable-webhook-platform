@@ -14,6 +14,8 @@ import com.kemselcuk.webhook.domain.repository.DeliveryRepository;
 import com.kemselcuk.webhook.domain.repository.EventRepository;
 import com.kemselcuk.webhook.domain.repository.OutboxEventRepository;
 import com.kemselcuk.webhook.domain.repository.WebhookEndpointRepository;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -126,6 +128,9 @@ class DeliveryRetryPipelineIT {
     private JdbcTemplate jdbcTemplate;
 
     @Autowired
+    private MeterRegistry meterRegistry;
+
+    @Autowired
     private DeliveryRepository deliveryRepository;
 
     @Autowired
@@ -171,6 +176,62 @@ class DeliveryRetryPipelineIT {
         assertThat(delivery(deliveryId).getAttemptCount()).isEqualTo(3);
         assertThat(delivery(deliveryId).getRunAttemptCount()).isEqualTo(3);
         assertPublishedOutboxCount(deliveryId, 3);
+    }
+
+    @Test
+    void retriesThroughKafkaAndExposesOrderedDetailAndBoundedMetricChanges() throws Exception {
+        String path = uniquePath();
+        stub500Then500Then204(path);
+
+        double acceptedEventsBefore = counter("webhook.events.accepted");
+        double deliveryIntentsBefore = counter("webhook.delivery.intents");
+        double retryScheduledBefore = counter("webhook.delivery.retries", "outcome", "retry_scheduled");
+        double failedOutcomesBefore = counter("webhook.delivery.outcomes", "outcome", "failed");
+        double successfulOutcomesBefore = counter("webhook.delivery.outcomes", "outcome", "success");
+        long retryableHttpBefore = timerCount("5xx");
+        long successfulHttpBefore = timerCount("2xx");
+
+        UUID deliveryId = createDelivery(path);
+        awaitDelivery(deliveryId, DeliveryStatus.SUCCESS, 3);
+        assertPublishedOutboxCount(deliveryId, 3);
+
+        ResponseEntity<JsonNode> detailResponse = restTemplate.exchange(
+                url("/api/deliveries/" + deliveryId),
+                HttpMethod.GET,
+                HttpEntity.EMPTY,
+                JsonNode.class
+        );
+        assertThat(detailResponse.getStatusCode().value()).isEqualTo(200);
+        JsonNode detail = detailResponse.getBody();
+        assertThat(detail).isNotNull();
+        assertThat(detail.get("delivery").get("id").asText()).isEqualTo(deliveryId.toString());
+        assertThat(detail.get("delivery").get("status").asText()).isEqualTo("SUCCESS");
+        assertThat(detail.get("delivery").get("attemptCount").asInt()).isEqualTo(3);
+        assertThat(detail.get("delivery").get("eventType").asText()).isEqualTo("order.created");
+        assertThat(detail.get("delivery").has("payload")).isFalse();
+        assertThat(detail.get("attempts")).hasSize(3);
+        assertThat(detail.get("attempts").get(0).get("attemptNumber").asInt()).isEqualTo(1);
+        assertThat(detail.get("attempts").get(1).get("attemptNumber").asInt()).isEqualTo(2);
+        assertThat(detail.get("attempts").get(2).get("attemptNumber").asInt()).isEqualTo(3);
+        assertThat(detail.get("attempts")).extracting(node -> node.get("outcome").asText())
+                .containsExactly("RETRYABLE_FAILURE", "RETRYABLE_FAILURE", "SUCCESS");
+        assertThat(detail.get("attempts")).extracting(node -> node.get("httpStatus").asInt())
+                .containsExactly(500, 500, 204);
+
+        await().atMost(Duration.ofSeconds(5)).untilAsserted(() -> {
+            assertThat(counter("webhook.events.accepted"))
+                    .isEqualTo(acceptedEventsBefore + 1);
+            assertThat(counter("webhook.delivery.intents"))
+                    .isEqualTo(deliveryIntentsBefore + 1);
+            assertThat(counter("webhook.delivery.retries", "outcome", "retry_scheduled"))
+                    .isEqualTo(retryScheduledBefore + 2);
+            assertThat(counter("webhook.delivery.outcomes", "outcome", "failed"))
+                    .isEqualTo(failedOutcomesBefore + 2);
+            assertThat(counter("webhook.delivery.outcomes", "outcome", "success"))
+                    .isEqualTo(successfulOutcomesBefore + 1);
+            assertThat(timerCount("5xx")).isEqualTo(retryableHttpBefore + 2);
+            assertThat(timerCount("2xx")).isEqualTo(successfulHttpBefore + 1);
+        });
     }
 
     @Test
@@ -333,6 +394,23 @@ class DeliveryRetryPipelineIT {
                     deliveryId
             )).isZero();
         });
+    }
+
+    private double counter(String name) {
+        Counter counter = meterRegistry.find(name).counter();
+        return counter == null ? 0 : counter.count();
+    }
+
+    private double counter(String name, String tagKey, String tagValue) {
+        Counter counter = meterRegistry.find(name).tag(tagKey, tagValue).counter();
+        return counter == null ? 0 : counter.count();
+    }
+
+    private long timerCount(String statusClass) {
+        var timer = meterRegistry.find("webhook.delivery.http.duration")
+                .tags("result", "http", "status_class", statusClass)
+                .timer();
+        return timer == null ? 0 : timer.count();
     }
 
     private com.kemselcuk.webhook.domain.Delivery delivery(UUID deliveryId) {

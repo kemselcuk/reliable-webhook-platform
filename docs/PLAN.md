@@ -21,10 +21,10 @@ The polling publisher may publish a Kafka record and crash before marking its ou
 
 ## Current status
 
-- Current phase: Phase 8 — Frontend completion `[x]` completed and merged to `main` at `566623d`; main CI run `35466213190` is green
-- Overall status: Phases 0–8 `[x]` completed and merged to `main`
-- Completed: durable outbox/retry/replay; API idempotency and concurrency safety; HMAC security; ECS correlation logs; bounded delivery/retry/backlog/latency/Kafka-lag metrics; local Prometheus/Grafana; and the browser-operated endpoint, event, delivery/attempt, replay, and system-summary workflows
-- Next: report the Phase 8 boundary to the user, then wait for authorization before Phase 9
+- Current phase: Phase 9 — Hardening `[~]` in progress on `feature/phase-9-hardening`
+- Overall status: Phases 0–8 `[x]` completed and merged to `main`; Phase 9 `[~]` in progress
+- Completed: durable outbox/retry/replay; API idempotency and concurrency safety; HMAC security; bounded observability; browser operations; critical-path failure/retry/success coverage; PostgreSQL query/locking review; bounded local resources; dependency-aware health; focused diagrams; and the reproducible optional demo receiver
+- Next: verify the full build and acceptance demo from a clean checkout, push the feature, verify feature CI, merge to `main`, and verify main CI
 - Environment note: local port `5432` was already occupied during final verification, so the full stack was successfully verified with the documented host-port overrides (`55432/59092/18080/13000`). This does not change container ports or application topology.
 - Intentionally deferred: CDC/Debezium, multi-tenancy, full secret rotation, OpenTelemetry, hosted deployment, and business-state use of a Kafka DLQ
 
@@ -181,20 +181,20 @@ Acceptance criteria:
 - [x] The complete platform demo workflow can be operated from a browser
 - [x] UI remains intentionally small and uses no paid or unnecessary heavy dependency
 
-## Phase 9 — Hardening `[ ]`
+## Phase 9 — Hardening `[~]`
 
 Features and tasks:
 
-- [ ] Complete critical integration/end-to-end and failure-path coverage
-- [ ] Review query plans, indexes, locking, resource limits, and container health checks
-- [ ] Finalize CI, Docker experience, security guidance, and docs
-- [ ] Add focused architecture diagrams and README demo/use case
-- [ ] Run the final failure-then-retry demo and verify metrics
+- [x] Complete critical integration/end-to-end and failure-path coverage
+- [x] Review query plans, indexes, locking, resource limits, and container health checks
+- [x] Finalize CI, Docker experience, security guidance, and docs
+- [x] Add focused architecture diagrams and README demo/use case
+- [x] Run the final failure-then-retry demo and verify metrics
 
 Acceptance criteria:
 
 - [ ] Full build and critical test suite pass from a clean checkout
-- [ ] Final demo shows endpoint creation, event submission, failed attempt, retry, success, attempt history, and metric changes
+- [x] Final demo shows endpoint creation, event submission, failed attempt, retry, success, attempt history, and metric changes
 - [ ] `main` is stable, documented, and reproducible with free local tooling
 
 ## Cross-cutting engineering rules
@@ -233,6 +233,22 @@ Acceptance criteria:
 `Reason: outbound HMAC calculation requires the original secret bytes, while a separate table keeps material out of endpoint DTOs and compact Kafka commands and provides the schema boundary for future overlapping-key rotation.`
 
 `Trade-off: PostgreSQL and its backups contain recoverable secret material and must be protected. Existing V5 receivers require a controlled provisioning step after backfill; complete rotation workflows and application-level encryption/key management remain deferred.`
+
+`Planned: Phase 9 would harden container health checks and degraded-mode behavior.`
+
+`Implemented: backend readiness includes PostgreSQL but intentionally excludes Kafka after startup; liveness remains process-local. Compose startup still waits for both PostgreSQL and Kafka before launching the backend.`
+
+`Reason: PostgreSQL is required for the atomic durable write, while a Kafka outage is a supported degraded mode in which outbox intent remains authoritative and can publish after broker recovery.`
+
+`Trade-off: an instance may report ready while asynchronous publication is delayed, so operators must use the outbox/Kafka metrics and dashboard alongside readiness.`
+
+`Planned: the final hardening demo would be reproducible with free local tooling.`
+
+`Implemented: an optional Compose profile runs a non-root, read-only, dependency-free receiver that returns one 500 then 204; a standard-library verification script exercises the real API/Kafka/worker/detail/metrics path and fails on any unexpected attempt or metric delta.`
+
+`Reason: the acceptance flow should run from a clean checkout without a hosted receiver, paid service, or extra host language dependency.`
+
+`Trade-off: enabling the profile pulls one additional Python Alpine image and the receiver is deliberately test-only rather than a production webhook implementation.`
 
 Record future material changes as: `Planned`, `Implemented`, `Reason`, and `Trade-off`.
 

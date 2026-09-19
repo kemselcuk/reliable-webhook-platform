@@ -71,6 +71,31 @@ The receiver should use the `X-Webhook-Key-Id` value to select the appropriate a
 - Store the caller's secret in a password manager or receiver configuration and do not commit it to source control.
 - Keep receiver clocks synchronized; a five-minute window limits replay exposure but does not replace receiver-side event/delivery idempotency.
 
+## Deployment boundary
+
+The checked-in Compose topology is a local demonstration environment, not a
+secure internet-facing deployment. REST authentication and authorization are
+intentionally deferred, local database/Kafka traffic is plaintext, and the
+default credentials are public development values. Before any shared or
+production-like deployment, put the API behind authenticated TLS termination,
+replace all defaults, restrict database and broker access, encrypt and control
+access to recoverable signing material, and define backup/restore procedures.
+
+Endpoint URLs are operator input and cause the worker to make outbound HTTP
+requests. The local demo deliberately permits private and loopback-style
+destinations, so it does not enforce a production SSRF policy. A production
+deployment must restrict egress at the network layer and validate destinations
+against an explicit allowlist or equivalent policy, including DNS resolution
+and redirect behavior. The worker already refuses URL user-info/fragments and
+does not follow redirects, but those checks are not a substitute for egress
+isolation.
+
+The API bounds endpoint selection and string fields, while JSON payload size is
+expected to be bounded by the ingress proxy in a deployment-specific way.
+Configure request-body and rate limits before exposure. Keep the local Actuator,
+Prometheus, Grafana, PostgreSQL, Kafka, and demo-receiver ports unreachable from
+untrusted networks.
+
 ## V5 to V6 local upgrade
 
 When Flyway upgrades an existing V5 database, V6 creates one active `v1` secret for every existing endpoint. The backfill uses PostgreSQL `gen_random_bytes(32)`, so these values are arbitrary binary material and must be provisioned as bytes (for example, base64-decoded), not treated as UTF-8 text. The value is intentionally unavailable through the endpoint API, browser list, logs, or Kafka messages.

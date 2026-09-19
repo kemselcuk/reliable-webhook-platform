@@ -1,6 +1,7 @@
 package com.kemselcuk.webhook.outbox;
 
 import jakarta.validation.constraints.AssertTrue;
+import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -21,6 +22,7 @@ public class OutboxPublisherProperties {
     private boolean enabled;
 
     @Min(1)
+    @Max(500)
     private int batchSize = 50;
 
     @NotNull
