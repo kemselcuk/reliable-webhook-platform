@@ -2,7 +2,7 @@
 
 Reliable Webhook Platform is a local-first Spring Boot and React workspace for exploring durable, asynchronous webhook delivery. The long-term design uses PostgreSQL as the source of truth and Apache Kafka as the transport between durable work state and delivery workers.
 
-Phase 8 currently provides the repository foundation, durable retry processing, manual replay, concurrency-safe asynchronous delivery, versioned HMAC webhook signing, local observability, and a small browser operations workflow:
+Phase 9 provides the repository foundation, durable retry processing, manual replay, concurrency-safe asynchronous delivery, versioned HMAC webhook signing, local observability, a small browser operations workflow, and a reproducible failure/retry/success demo:
 
 - a Java 21 / Spring Boot 3.5.16 backend;
 - a small React + TypeScript + Vite frontend;
@@ -35,7 +35,8 @@ Authentication and secret rotation remain intentionally deferred. The current RE
 backend/       Spring Boot application, Maven wrapper, unit and HTTP integration tests
 frontend/      Vite React/TypeScript application and its production nginx image
 docs/          living plan and architecture direction
-compose.yaml   local PostgreSQL, Kafka, backend, and frontend stack
+compose.yaml   local PostgreSQL, Kafka, backend, frontend, monitoring, and optional demo receiver
+demo/          dependency-free receiver for the failure/retry/success walkthrough
 .github/       CI workflow
 ```
 
@@ -219,13 +220,64 @@ Validate the rendered Compose model without starting containers:
 docker compose config
 ```
 
+### Failure, retry, and success demo
+
+The optional `demo` profile adds a tiny receiver that returns `500` for the
+first webhook and `204` for later attempts. It stores only response status
+codes in memory; it does not log or retain payloads, secrets, or signature
+headers.
+
+```bash
+docker compose --profile demo up --build -d
+curl -i -X POST http://localhost:18081/reset
+```
+
+Open `http://localhost:3000`, then:
+
+1. Create an enabled endpoint named `Retry demo` with URL
+   `http://demo-receiver:8081/webhooks` and a unique secret of at least 32
+   UTF-8 bytes.
+2. Select that endpoint and submit an `order.created` event.
+3. Open the resulting delivery. It first reaches `RETRY_SCHEDULED`, then
+   `SUCCESS`; attempt history shows a `500` retryable failure followed by a
+   `204` success.
+
+The default retry delay is one second. These checks expose the receiver's
+observed statuses and the platform's bounded metrics:
+
+```bash
+curl http://localhost:18081/attempts
+curl -s http://localhost:8080/actuator/prometheus | grep -E \
+  'webhook_delivery_(retries|outcomes|http_duration_seconds_count)'
+```
+
+Expected receiver output is
+`{"count":2,"responseStatuses":[500,204]}`. The retry counter increases once,
+the outcome counters include one failed attempt and one success, and HTTP
+duration counts increase for both the `5xx` and `2xx` status classes. Grafana
+shows the same flow at `http://localhost:3001`. Use
+`DEMO_RECEIVER_PORT` if port `18081` is occupied. Reset the receiver before
+repeating the walkthrough; use a new endpoint name or reuse the existing
+endpoint.
+
+To run the same acceptance flow automatically through the real API, Kafka,
+worker, receiver, detail API, and Prometheus registry:
+
+```bash
+docker compose --profile demo exec demo-receiver python /demo/verify.py
+```
+
+The command exits nonzero unless the two immutable attempts are exactly
+`RETRYABLE_FAILURE/500` then `SUCCESS/204` and every expected metric delta is
+exactly one.
+
 ## CI checks
 
 `.github/workflows/ci.yml` has separate backend and frontend jobs plus an integration job. The backend job runs the build and Surefire unit tests with Failsafe `*IT` tests skipped. The integration job uses the runner's Docker daemon for PostgreSQL/Kafka Testcontainers, executes the Failsafe suite, and validates `docker compose config`.
 
 ## Architecture and guarantees
 
-See [docs/architecture.md](docs/architecture.md) for the current flow, failure boundaries, claim/lease behavior, and explicit guarantees. External HTTP is outside the database transaction, so delivery is at-least-once rather than exactly-once.
+See [docs/architecture.md](docs/architecture.md) for the current flow, failure boundaries, claim/lease behavior, and explicit guarantees, and [docs/performance.md](docs/performance.md) for the Phase 9 query-plan, locking, batching, resource, and health review. External HTTP is outside the database transaction, so delivery is at-least-once rather than exactly-once.
 
 ## Git workflow
 
@@ -233,4 +285,4 @@ Use a focused `feature/`, `fix/`, `refactor/`, or `docs/` branch for meaningful 
 
 ## Current limitations
 
-Authentication (beyond webhook signing), secret rotation, and hosted deployment remain later or intentionally deferred work. The outbox and worker are both at-least-once: a crash around Kafka acknowledgement or external HTTP completion can produce duplicate commands or requests. Lease expiry and claim tokens prevent stale workers from overwriting newer state, and a duplicate command received after `SUCCESS` is terminal and does not resend the request. HTTP connect/response timeouts and worker concurrency are bounded by `webhook.delivery.worker` properties.
+Authentication (beyond webhook signing), secret rotation, and hosted deployment remain later or intentionally deferred work. The local stack is not an internet-facing production deployment: add authentication, TLS termination, request-size/rate limits, and outbound network policy before exposing it. The outbox and worker are both at-least-once: a crash around Kafka acknowledgement or external HTTP completion can produce duplicate commands or requests. Lease expiry and claim tokens prevent stale workers from overwriting newer state, and a duplicate command received after `SUCCESS` is terminal and does not resend the request. HTTP connect/response timeouts, worker concurrency, scheduler/publisher batches, and local container resources are bounded.

@@ -21,10 +21,10 @@ The polling publisher may publish a Kafka record and crash before marking its ou
 
 ## Current status
 
-- Current phase: Phase 8 — Frontend completion `[x]` completed and merged to `main` at `566623d`; main CI run `35466213190` is green
-- Overall status: Phases 0–8 `[x]` completed and merged to `main`
-- Completed: durable outbox/retry/replay; API idempotency and concurrency safety; HMAC security; ECS correlation logs; bounded delivery/retry/backlog/latency/Kafka-lag metrics; local Prometheus/Grafana; and the browser-operated endpoint, event, delivery/attempt, replay, and system-summary workflows
-- Next: report the Phase 8 boundary to the user, then wait for authorization before Phase 9
+- Current phase: Phase 9 — Hardening `[~]` in progress on `feature/phase-9-hardening`
+- Overall status: Phases 0–8 `[x]` completed and merged to `main`; Phase 9 `[~]` in progress
+- Completed: durable outbox/retry/replay; API idempotency and concurrency safety; HMAC security; bounded observability; browser operations; critical-path failure/retry/success coverage; PostgreSQL query/locking review; bounded local resources; dependency-aware health; focused diagrams; and the reproducible optional demo receiver
+- Next: push the feature, verify feature CI, merge to `main`, and verify main CI
 - Environment note: local port `5432` was already occupied during final verification, so the full stack was successfully verified with the documented host-port overrides (`55432/59092/18080/13000`). This does not change container ports or application topology.
 - Intentionally deferred: CDC/Debezium, multi-tenancy, full secret rotation, OpenTelemetry, hosted deployment, and business-state use of a Kafka DLQ
 
@@ -181,20 +181,20 @@ Acceptance criteria:
 - [x] The complete platform demo workflow can be operated from a browser
 - [x] UI remains intentionally small and uses no paid or unnecessary heavy dependency
 
-## Phase 9 — Hardening `[ ]`
+## Phase 9 — Hardening `[~]`
 
 Features and tasks:
 
-- [ ] Complete critical integration/end-to-end and failure-path coverage
-- [ ] Review query plans, indexes, locking, resource limits, and container health checks
-- [ ] Finalize CI, Docker experience, security guidance, and docs
-- [ ] Add focused architecture diagrams and README demo/use case
-- [ ] Run the final failure-then-retry demo and verify metrics
+- [x] Complete critical integration/end-to-end and failure-path coverage
+- [x] Review query plans, indexes, locking, resource limits, and container health checks
+- [x] Finalize CI, Docker experience, security guidance, and docs
+- [x] Add focused architecture diagrams and README demo/use case
+- [x] Run the final failure-then-retry demo and verify metrics
 
 Acceptance criteria:
 
-- [ ] Full build and critical test suite pass from a clean checkout
-- [ ] Final demo shows endpoint creation, event submission, failed attempt, retry, success, attempt history, and metric changes
+- [x] Full build and critical test suite pass from a clean checkout
+- [x] Final demo shows endpoint creation, event submission, failed attempt, retry, success, attempt history, and metric changes
 - [ ] `main` is stable, documented, and reproducible with free local tooling
 
 ## Cross-cutting engineering rules
@@ -234,6 +234,22 @@ Acceptance criteria:
 
 `Trade-off: PostgreSQL and its backups contain recoverable secret material and must be protected. Existing V5 receivers require a controlled provisioning step after backfill; complete rotation workflows and application-level encryption/key management remain deferred.`
 
+`Planned: Phase 9 would harden container health checks and degraded-mode behavior.`
+
+`Implemented: backend readiness includes PostgreSQL but intentionally excludes Kafka after startup; liveness remains process-local. Compose startup still waits for both PostgreSQL and Kafka before launching the backend.`
+
+`Reason: PostgreSQL is required for the atomic durable write, while a Kafka outage is a supported degraded mode in which outbox intent remains authoritative and can publish after broker recovery.`
+
+`Trade-off: an instance may report ready while asynchronous publication is delayed, so operators must use the outbox/Kafka metrics and dashboard alongside readiness.`
+
+`Planned: the final hardening demo would be reproducible with free local tooling.`
+
+`Implemented: an optional Compose profile runs a non-root, read-only, dependency-free receiver that returns one 500 then 204; a standard-library verification script exercises the real API/Kafka/worker/detail/metrics path and fails on any unexpected attempt or metric delta.`
+
+`Reason: the acceptance flow should run from a clean checkout without a hosted receiver, paid service, or extra host language dependency.`
+
+`Trade-off: enabling the profile pulls one additional Python Alpine image and the receiver is deliberately test-only rather than a production webhook implementation.`
+
 Record future material changes as: `Planned`, `Implemented`, `Reason`, and `Trade-off`.
 
 ## Environment notes
@@ -250,3 +266,4 @@ Record future material changes as: `Planned`, `Implemented`, `Reason`, and `Trad
 - Phase 6 acceptance verification passed backend `./mvnw verify` with 48 unit tests and 54 integration tests, including V5-to-V6 secret backfill, PostgreSQL constraints, API non-exposure, concurrent claim secret loading, exact WireMock request signing, and the Kafka delivery/retry pipelines; frontend lint, typecheck, 7 tests, and production build passed; `docker compose config --quiet` and `git diff --check` passed. Feature CI run `35407088320` and merged `main` CI run `35407250000` are green; the phase is merged to `main` at `ea659b9`.
 - Phase 7 acceptance verification passed backend `./mvnw verify` with 51 unit tests and 55 integration tests; frontend lint, typecheck, 7 tests, and production build; Compose, Prometheus, and dashboard syntax checks; and a fresh six-service isolated Compose run. Five forced connection-failure events produced 20 durable retry transitions, 5 `DEAD` transitions, a zero final retry backlog, HTTP latency samples, correlated ECS logs without payload/secret material, a healthy Prometheus target, and a provisioned Grafana dashboard. Host ports `58432/59097/18087/13007/19090/23001` avoided occupied local ports; verification containers/network were removed and the isolated named volumes were preserved. Feature CI run `35447519218` and merged `main` CI run `35447638902` are green; the phase is merged to `main` at `8556cf8`.
 - Phase 8 acceptance verification passed backend `./mvnw verify` with 51 unit and 59 integration tests; frontend lint, typecheck, 9 tests, and production build; `docker compose config --quiet`; and `git diff --check`. A fresh six-service Compose project on host ports `59432/59098/18088/13008/19091/23002` was operated through Chrome and the real API: endpoint enable/disable, idempotent event submission, durable failure retries to `DEAD`, paginated delivery metadata, ordered attempt history, eligible replay with current-run reset, and the bounded system summary were all observed. Delivery reads omitted the submitted payload and secret. Verification containers/network were removed without deleting the isolated named volumes. Feature CI run `35453318281` and merged `main` CI run `35466213190` are green; the phase is merged to `main` at `566623d`.
+- Phase 9 pre-merge verification passed from a clean archive of `ea08207`: backend `./mvnw verify` ran 53 unit and 60 integration tests; fresh `npm ci`, lint, typecheck, 9 tests, and production build passed; both Compose models and Python demo scripts validated. A fresh seven-service `phase9clean` project applied Flyway V8 and reported every service healthy on host ports `55432/59092/18080/13000/19090/23001/18091`. The automated real API/Kafka/worker demo observed immutable `500` then `204` attempts, final `SUCCESS`, and exact +1 deltas for accepted event, delivery intent, retry, failed/success outcomes, and 5xx/2xx timers. PostgreSQL-down readiness returned 503, Kafka-down readiness remained UP, all resource limits were active, and 20,000-row PostgreSQL plans used the expected paging, retry, and outbox indexes. Isolated verification volumes were preserved until phase closure.

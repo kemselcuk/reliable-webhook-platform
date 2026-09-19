@@ -4,7 +4,7 @@
 
 The platform is a small, fully local webhook delivery system. PostgreSQL is authoritative for business state; Kafka provides asynchronous transport, buffering, and horizontal consumption. A React UI exercises the real HTTP API and shows operational state without becoming a second source of truth.
 
-Phase 8 includes the PostgreSQL persistence foundation, REST/browser event flow, transactional outbox, Kafka publisher, bounded delivery worker, durable retry policy, due-retry requeueing, manual replay, API idempotency, concurrency hardening, versioned HMAC signing, local observability, and the delivery operations browser. A canonical request hash and stored response reference are persisted with a unique `Idempotency-Key`. Event creation records business state, publish intent, and the idempotency record atomically; the publisher sends compact delivery commands and the worker claims and delivers them asynchronously. Webhook endpoint signing material is stored in a separate rotation-ready table and loaded into a redaction-safe detached snapshot only after a delivery claim.
+Phase 9 includes the PostgreSQL persistence foundation, REST/browser event flow, transactional outbox, Kafka publisher, bounded delivery worker, durable retry policy, due-retry requeueing, manual replay, API idempotency, concurrency hardening, versioned HMAC signing, local observability, the delivery operations browser, and a reproducible hardening demo. A canonical request hash and stored response reference are persisted with a unique `Idempotency-Key`. Event creation records business state, publish intent, and the idempotency record atomically; the publisher sends compact delivery commands and the worker claims and delivers them asynchronously. Webhook endpoint signing material is stored in a separate rotation-ready table and loaded into a redaction-safe detached snapshot only after a delivery claim.
 
 ## Current domain persistence
 
@@ -33,27 +33,32 @@ On a V5-to-V6 upgrade, those existing endpoints therefore receive arbitrary 32-b
 
 The append-only V7 migration adds `(created_at DESC, id DESC)` and `(status, created_at DESC, id DESC)` indexes for the bounded delivery list API. The existing `(status, next_retry_at)` scheduling index remains because retry workers use a different access pattern. Delivery list/detail DTOs intentionally omit event payloads and signing secrets; the detail API fetches attempts with an explicit attempt-number ordering query. The browser summary API exposes process-lifetime Micrometer counters as counters, not durable database totals.
 
+The append-only V8 migration replaces the endpoint creation-time-only index
+with `(created_at DESC, id DESC)`, matching the complete stable endpoint page
+order and avoiding an incremental sort as endpoint volume grows.
+
 ## Implemented event flow
 
-```text
-API request
-    |
-    v
-PostgreSQL transaction: Event + Delivery + OutboxEvent + IdempotencyKey (when supplied)
-    |
-    v
-Polling publisher -> Kafka delivery command -> worker
-                                      |
-                                      v
-                     lease/token claim in PostgreSQL
-                                      |
-                                      v
-                         sign exact UTF-8 body + timestamp
-                                      |
-                         external webhook HTTP request
-                                      |
-                                      v
-                     attempt + state transition in PostgreSQL
+```mermaid
+sequenceDiagram
+    actor Client
+    participant API
+    participant DB as PostgreSQL
+    participant Publisher as Outbox publisher
+    participant Kafka
+    participant Worker
+    participant Receiver
+    Client->>API: POST /api/events
+    API->>DB: Event + Delivery + Outbox (+ idempotency key)
+    DB-->>API: Atomic commit
+    API-->>Client: 201 Created
+    Publisher->>DB: Claim due outbox row
+    Publisher->>Kafka: Compact delivery reference
+    Kafka->>Worker: Delivery command
+    Worker->>DB: Short lease/token claim
+    Worker->>Receiver: Signed HTTP request (outside transaction)
+    Receiver-->>Worker: HTTP/transport result
+    Worker->>DB: Token-guarded attempt + state transition
 ```
 
 Creating an event now persists the event, deliveries, and one outbox command per delivery in one database transaction. The polling publisher moves compact, versioned delivery references to Kafka. The delivery worker validates the command and key, loads current state from PostgreSQL, claims eligible delivery work safely, performs bounded-concurrency HTTP delivery, and persists token-guarded attempts and state transitions.
@@ -85,6 +90,21 @@ The durable status meanings are:
 - `FAILED`: a permanent failure completed, or a delivery is eligible for manual replay;
 - `DEAD`: the retry budget was exhausted and the delivery requires manual replay;
 - `PENDING`/`PROCESSING`: queued or actively claimed work.
+
+```mermaid
+stateDiagram-v2
+    [*] --> PENDING
+    PENDING --> PROCESSING: atomic lease claim
+    PROCESSING --> SUCCESS: 2xx
+    PROCESSING --> FAILED: permanent 4xx/redirect
+    PROCESSING --> RETRY_SCHEDULED: 429/5xx/transport
+    PROCESSING --> DEAD: retry budget exhausted
+    PROCESSING --> PENDING: stale lease recovery
+    RETRY_SCHEDULED --> PENDING: durable scheduler + outbox
+    FAILED --> PENDING: manual replay
+    DEAD --> PENDING: manual replay
+    SUCCESS --> [*]
+```
 
 Manual replay locks the delivery and endpoint row, accepts only enabled `FAILED` or `DEAD` deliveries, changes the delivery to `PENDING`, clears retry/lease state, resets `run_attempt_count`, preserves lifetime `attempt_count` and every existing `delivery_attempts` row, and inserts one new outbox command in the same transaction. Concurrent replay requests therefore produce at most one accepted transition/outbox command.
 
@@ -125,7 +145,7 @@ The controller listener remains internal to the single-node KRaft broker. The ba
 
 ## Local topology
 
-Compose defines six services for the local topology:
+Compose defines six always-on services for the local topology:
 
 - PostgreSQL 17-alpine with a named data volume;
 - official Apache Kafka 4.3.1 in single-node KRaft mode with a named data volume;
@@ -134,7 +154,19 @@ Compose defines six services for the local topology:
 - Prometheus with a named local data volume scraping `/actuator/prometheus`;
 - Grafana with a named local data volume and provisioned Prometheus datasource/dashboard.
 
+An optional `demo` profile adds a seventh, non-root, read-only Python receiver
+for the deterministic failure/retry/success walkthrough. It is test tooling,
+not part of authoritative platform state or the normal topology.
+
 The backend and frontend health checks use readiness/HTTP endpoints. Compose dependencies wait for infrastructure and backend health. The backend connects to PostgreSQL and Kafka, runs Flyway, and starts the outbox polling publisher, delivery worker, and durable retry scheduler after the broker is healthy in Compose. Compose enables all three; a host-run backend must set `WEBHOOK_DELIVERY_WORKER_ENABLED=true` and `WEBHOOK_DELIVERY_RETRY_SCHEDULER_ENABLED=true` when retry processing is desired.
+
+Backend readiness includes PostgreSQL because accepting an event without its
+durable source of truth is impossible. Kafka is intentionally not a readiness
+dependency after startup: during a broker outage the API may continue to
+commit event, delivery, and outbox intent atomically, and publication resumes
+from durable state when Kafka recovers. Compose applies explicit CPU, memory,
+and process limits to every service so an accidental local overload remains
+contained.
 
 ## Phase boundaries
 

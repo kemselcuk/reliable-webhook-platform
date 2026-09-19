@@ -8,6 +8,11 @@ spring:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${POSTGRES_DB:webhook}}
     username: ${SPRING_DATASOURCE_USERNAME:${POSTGRES_USER:webhook}}
     password: ${SPRING_DATASOURCE_PASSWORD:${POSTGRES_PASSWORD:webhook-local-only}}
+    hikari:
+      maximum-pool-size: ${SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE:10}
+      minimum-idle: ${SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE:2}
+      connection-timeout: ${SPRING_DATASOURCE_HIKARI_CONNECTION_TIMEOUT:3000}
+      validation-timeout: ${SPRING_DATASOURCE_HIKARI_VALIDATION_TIMEOUT:2000}
   kafka:
     bootstrap-servers: ${SPRING_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
     consumer:
@@ -38,6 +43,9 @@ spring:
     locations: classpath:db/migration
 
 management:
+  info:
+    env:
+      enabled: true
   endpoints:
     web:
       exposure:
@@ -47,6 +55,11 @@ management:
       probes:
         enabled: true
       show-details: never
+      group:
+        liveness:
+          include: livenessState
+        readiness:
+          include: readinessState,db
     prometheus:
       enabled: true
   health:
@@ -73,7 +86,7 @@ logging:
 info:
   app:
     name: ${spring.application.name}
-    phase: 7
+    phase: 9
 
 webhook:
   delivery:

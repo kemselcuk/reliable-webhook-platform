@@ -72,4 +72,9 @@ jobs:
         run: ./mvnw -B -DskipUnitTests=true verify
       - name: Validate Compose definition
         working-directory: .
-        run: docker compose config
+        run: |
+          docker compose config --quiet
+          docker compose --profile demo config --quiet
+      - name: Validate local demo receiver
+        working-directory: .
+        run: python3 -m py_compile demo/receiver.py demo/verify.py
