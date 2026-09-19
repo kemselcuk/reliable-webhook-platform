@@ -12,13 +12,20 @@ import com.kemselcuk.webhook.domain.repository.EventRepository;
 import com.kemselcuk.webhook.domain.repository.EventIdempotencyKeyRepository;
 import com.kemselcuk.webhook.domain.repository.OutboxEventRepository;
 import com.kemselcuk.webhook.domain.repository.WebhookEndpointRepository;
+import com.kemselcuk.webhook.observability.LogContext;
+import com.kemselcuk.webhook.observability.WebhookMetrics;
 import com.kemselcuk.webhook.web.ApiRequestValidationException;
 import com.kemselcuk.webhook.web.DisabledEndpointException;
 import com.kemselcuk.webhook.web.EndpointNotFoundException;
 import com.kemselcuk.webhook.web.IdempotencyKeyConflictException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.PreparedStatementCallback;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.HashMap;
@@ -30,6 +37,8 @@ import java.util.UUID;
 @Service
 public class EventService {
 
+    private static final Logger LOGGER = LoggerFactory.getLogger(EventService.class);
+
     private final EventRepository eventRepository;
     private final DeliveryRepository deliveryRepository;
     private final OutboxEventRepository outboxEventRepository;
@@ -38,7 +47,9 @@ public class EventService {
     private final CanonicalRequestHasher requestHasher;
     private final ObjectMapper objectMapper;
     private final JdbcTemplate jdbcTemplate;
+    private final WebhookMetrics metrics;
 
+    @Autowired
     public EventService(
             EventRepository eventRepository,
             DeliveryRepository deliveryRepository,
@@ -47,7 +58,8 @@ public class EventService {
             EventIdempotencyKeyRepository idempotencyKeyRepository,
             CanonicalRequestHasher requestHasher,
             ObjectMapper objectMapper,
-            JdbcTemplate jdbcTemplate
+            JdbcTemplate jdbcTemplate,
+            WebhookMetrics metrics
     ) {
         this.eventRepository = eventRepository;
         this.deliveryRepository = deliveryRepository;
@@ -57,6 +69,7 @@ public class EventService {
         this.requestHasher = requestHasher;
         this.objectMapper = objectMapper;
         this.jdbcTemplate = jdbcTemplate;
+        this.metrics = metrics;
     }
 
     @Transactional
@@ -139,7 +152,27 @@ public class EventService {
                     objectMapper.valueToTree(response)
             ));
         }
+        recordAcceptedAfterCommit(event.getId(), deliveries.size());
         return response;
+    }
+
+    private void recordAcceptedAfterCommit(UUID eventId, int deliveryCount) {
+        Runnable record = () -> {
+            metrics.eventCreated(deliveryCount);
+            try (LogContext ignored = LogContext.event(eventId)) {
+                LOGGER.info("event accepted delivery_count={}", deliveryCount);
+            }
+        };
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    record.run();
+                }
+            });
+        } else {
+            record.run();
+        }
     }
 
     private EventResponse storedResponse(EventIdempotencyKey idempotencyKey) {

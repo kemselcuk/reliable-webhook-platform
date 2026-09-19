@@ -41,21 +41,39 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,prometheus
   endpoint:
     health:
       probes:
         enabled: true
+      show-details: never
+    prometheus:
+      enabled: true
   health:
     livenessstate:
       enabled: true
     readinessstate:
       enabled: true
+  metrics:
+    tags:
+      application: ${spring.application.name}
+    distribution:
+      percentiles-histogram:
+        webhook.delivery.http.duration: true
+  prometheus:
+    metrics:
+      export:
+        enabled: true
+
+logging:
+  structured:
+    format:
+      console: ecs
 
 info:
   app:
     name: ${spring.application.name}
-    phase: 4
+    phase: 7
 
 webhook:
   delivery:

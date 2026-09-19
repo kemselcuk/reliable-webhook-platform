@@ -2,7 +2,7 @@
 
 Reliable Webhook Platform is a local-first Spring Boot and React workspace for exploring durable, asynchronous webhook delivery. The long-term design uses PostgreSQL as the source of truth and Apache Kafka as the transport between durable work state and delivery workers.
 
-Phase 6 currently provides the repository foundation, durable retry processing, manual replay, concurrency-safe asynchronous delivery, and versioned HMAC webhook signing:
+Phase 7 currently provides the repository foundation, durable retry processing, manual replay, concurrency-safe asynchronous delivery, versioned HMAC webhook signing, and local observability:
 
 - a Java 21 / Spring Boot 3.5.16 backend;
 - a small React + TypeScript + Vite frontend;
@@ -22,8 +22,12 @@ Phase 6 currently provides the repository foundation, durable retry processing, 
 - `DEAD` transition after the retry budget is exhausted and an atomic manual replay API for terminal failures;
 - PostgreSQL, Kafka, and WireMock integration coverage for the complete asynchronous API-to-webhook flow;
 - a minimal browser workflow for endpoint registration/listing (including one-time secret entry) and event submission to selected endpoints.
+- Actuator health/readiness/info and Prometheus endpoints with safe health details;
+- ECS structured console logs with event/delivery correlation and payload/secret redaction;
+- bounded-cardinality delivery, retry, backlog, HTTP latency, and Kafka lag metrics;
+- local Prometheus and Grafana Compose services with a provisioned delivery dashboard.
 
-Authentication, metrics, and the remaining delivery-detail UI are later-phase work. The current REST flow durably records publish intent, publishes a compact delivery reference to Kafka, and asynchronously sends the event payload to the configured webhook endpoint with a versioned HMAC signature.
+Authentication and the remaining delivery-detail UI are later-phase work. The current REST flow durably records publish intent, publishes a compact delivery reference to Kafka, and asynchronously sends the event payload to the configured webhook endpoint with a versioned HMAC signature. See [docs/observability.md](docs/observability.md) for metric names, redaction boundaries, local monitoring, and the OpenTelemetry decision.
 
 ## Repository layout
 
@@ -60,6 +64,7 @@ The backend listens on `http://localhost:8080`. Check it with:
 ```bash
 curl http://localhost:8080/api/system/health
 curl http://localhost:8080/actuator/health/readiness
+curl http://localhost:8080/actuator/prometheus
 ```
 
 Compose exposes Kafka on two listener addresses: containers use `kafka:29092` (the `INTERNAL` listener), while host tools use `localhost:${KAFKA_PORT:-9092}` (the `EXTERNAL` listener). The Compose backend uses the internal address; a backend started directly on the host uses the external address. The backend connects to the Compose PostgreSQL service using the same database credentials through `SPRING_DATASOURCE_*` environment variables.
@@ -154,6 +159,13 @@ docker compose ps
 
 Open `http://localhost:3000`. From the UI, create an endpoint, select it in the event form, and submit the sample JSON payload. The platform stores the event, delivery, and outbox intent, then publishes and consumes the compact command asynchronously. A successful webhook becomes `SUCCESS`; retryable failures move through `RETRY_SCHEDULED` and back to `PENDING`, while exhausted retries become `DEAD`.
 
+Prometheus is available at `http://localhost:9090` and Grafana at
+`http://localhost:3001` with the provisioned **Reliable Webhook Platform
+Overview** dashboard. Grafana uses `admin` / `admin-local-only` by default for
+the isolated local stack; override `GRAFANA_ADMIN_USER` and
+`GRAFANA_ADMIN_PASSWORD` when needed. See [docs/observability.md](docs/observability.md)
+for metric labels and redaction guarantees.
+
 Inspect recent outbox state:
 
 ```bash
@@ -219,4 +231,4 @@ Use a focused `feature/`, `fix/`, `refactor/`, or `docs/` branch for meaningful 
 
 ## Current limitations
 
-Authentication (beyond webhook signing), Prometheus/Grafana observability (Phase 7), the remaining delivery-detail/replay UI (Phase 8), and hosted deployment remain later or intentionally deferred work. The outbox and worker are both at-least-once: a crash around Kafka acknowledgement or external HTTP completion can produce duplicate commands or requests. Lease expiry and claim tokens prevent stale workers from overwriting newer state, and a duplicate command received after `SUCCESS` is terminal and does not resend the request. HTTP connect/response timeouts and worker concurrency are bounded by `webhook.delivery.worker` properties.
+Authentication (beyond webhook signing), the remaining delivery-detail/replay UI (Phase 8), and hosted deployment remain later or intentionally deferred work. The outbox and worker are both at-least-once: a crash around Kafka acknowledgement or external HTTP completion can produce duplicate commands or requests. Lease expiry and claim tokens prevent stale workers from overwriting newer state, and a duplicate command received after `SUCCESS` is terminal and does not resend the request. HTTP connect/response timeouts and worker concurrency are bounded by `webhook.delivery.worker` properties.
