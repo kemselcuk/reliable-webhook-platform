@@ -2,11 +2,11 @@
 
 Reliable Webhook Platform is a local-first Spring Boot and React workspace for exploring durable, asynchronous webhook delivery. The long-term design uses PostgreSQL as the source of truth and Apache Kafka as the transport between durable work state and delivery workers.
 
-Phase 7 currently provides the repository foundation, durable retry processing, manual replay, concurrency-safe asynchronous delivery, versioned HMAC webhook signing, and local observability:
+Phase 8 currently provides the repository foundation, durable retry processing, manual replay, concurrency-safe asynchronous delivery, versioned HMAC webhook signing, local observability, and a small browser operations workflow:
 
 - a Java 21 / Spring Boot 3.5.16 backend;
 - a small React + TypeScript + Vite frontend;
-- a backend system-health API at `GET /api/system/health`;
+- backend system-health and bounded summary APIs at `GET /api/system/health` and `GET /api/system/summary`;
 - a frontend health card with loading, healthy, and error states;
 - PostgreSQL 17 and single-node Apache Kafka 4.3.1 Compose services;
 - Dockerfiles, readiness health checks, and GitHub Actions checks;
@@ -21,13 +21,13 @@ Phase 7 currently provides the repository foundation, durable retry processing, 
 - PostgreSQL retry state and a polling scheduler that requeues due deliveries through the transactional outbox;
 - `DEAD` transition after the retry budget is exhausted and an atomic manual replay API for terminal failures;
 - PostgreSQL, Kafka, and WireMock integration coverage for the complete asynchronous API-to-webhook flow;
-- a minimal browser workflow for endpoint registration/listing (including one-time secret entry) and event submission to selected endpoints.
+- a minimal browser workflow for endpoint registration/listing (including one-time secret entry), safe enable/disable, idempotent event submission, delivery browsing, attempt inspection, and eligible replay.
 - Actuator health/readiness/info and Prometheus endpoints with safe health details;
 - ECS structured console logs with event/delivery correlation and payload/secret redaction;
 - bounded-cardinality delivery, retry, backlog, HTTP latency, and Kafka lag metrics;
 - local Prometheus and Grafana Compose services with a provisioned delivery dashboard.
 
-Authentication and the remaining delivery-detail UI are later-phase work. The current REST flow durably records publish intent, publishes a compact delivery reference to Kafka, and asynchronously sends the event payload to the configured webhook endpoint with a versioned HMAC signature. See [docs/observability.md](docs/observability.md) for metric names, redaction boundaries, local monitoring, and the OpenTelemetry decision.
+Authentication and secret rotation remain intentionally deferred. The current REST flow durably records publish intent, publishes a compact delivery reference to Kafka, and asynchronously sends the event payload to the configured webhook endpoint with a versioned HMAC signature. See [docs/observability.md](docs/observability.md) for metric names, redaction boundaries, local monitoring, and the OpenTelemetry decision.
 
 ## Repository layout
 
@@ -150,6 +150,8 @@ curl -i -X POST \
 
 The response is `202 Accepted` with the delivery ID, `PENDING` status, lifetime attempt count, and reset current-run count. Replay preserves the delivery-attempt history and lifetime counter, resets only `run_attempt_count`, clears retry/lease state, and creates one new outbox command. A concurrent replay request receives a conflict rather than creating duplicate work.
 
+Delivery browser reads are available at `GET /api/deliveries?page=0&size=20&status=FAILED` and `GET /api/deliveries/<delivery-uuid>`. The list is bounded and ordered by `(created_at, id)`; detail returns endpoint/event metadata, durable status/counters/timestamps, and immutable attempts in attempt-number order. Payloads and signing secrets are deliberately omitted. `GET /api/system/summary` returns bounded durable counts plus process-lifetime Micrometer accepted-event/delivery-intent counters for the local operations view.
+
 ### Full local Compose stack
 
 ```bash
@@ -157,7 +159,7 @@ docker compose up --build -d
 docker compose ps
 ```
 
-Open `http://localhost:3000`. From the UI, create an endpoint, select it in the event form, and submit the sample JSON payload. The platform stores the event, delivery, and outbox intent, then publishes and consumes the compact command asynchronously. A successful webhook becomes `SUCCESS`; retryable failures move through `RETRY_SCHEDULED` and back to `PENDING`, while exhausted retries become `DEAD`.
+Open `http://localhost:3000`. From the UI, create or enable an endpoint, select it in the event form, optionally provide an idempotency key, and submit the sample JSON payload. The first resulting delivery is selected automatically; use the delivery browser to inspect status/attempts and replay only `FAILED` or `DEAD` deliveries. The platform stores the event, delivery, and outbox intent, then publishes and consumes the compact command asynchronously. A successful webhook becomes `SUCCESS`; retryable failures move through `RETRY_SCHEDULED` and back to `PENDING`, while exhausted retries become `DEAD`.
 
 Prometheus is available at `http://localhost:9090` and Grafana at
 `http://localhost:3001` with the provisioned **Reliable Webhook Platform
@@ -231,4 +233,4 @@ Use a focused `feature/`, `fix/`, `refactor/`, or `docs/` branch for meaningful 
 
 ## Current limitations
 
-Authentication (beyond webhook signing), the remaining delivery-detail/replay UI (Phase 8), and hosted deployment remain later or intentionally deferred work. The outbox and worker are both at-least-once: a crash around Kafka acknowledgement or external HTTP completion can produce duplicate commands or requests. Lease expiry and claim tokens prevent stale workers from overwriting newer state, and a duplicate command received after `SUCCESS` is terminal and does not resend the request. HTTP connect/response timeouts and worker concurrency are bounded by `webhook.delivery.worker` properties.
+Authentication (beyond webhook signing), secret rotation, and hosted deployment remain later or intentionally deferred work. The outbox and worker are both at-least-once: a crash around Kafka acknowledgement or external HTTP completion can produce duplicate commands or requests. Lease expiry and claim tokens prevent stale workers from overwriting newer state, and a duplicate command received after `SUCCESS` is terminal and does not resend the request. HTTP connect/response timeouts and worker concurrency are bounded by `webhook.delivery.worker` properties.

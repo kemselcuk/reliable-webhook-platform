@@ -5,6 +5,8 @@ export type HealthResponse = {
   service: string;
 };
 
+export type DeliveryStatus = 'PENDING' | 'PROCESSING' | 'RETRY_SCHEDULED' | 'SUCCESS' | 'FAILED' | 'DEAD';
+
 export type WebhookEndpoint = {
   id: string;
   name: string;
@@ -28,6 +30,65 @@ export type CreateEventResponse = {
   payload: unknown;
   deliveryIds: string[];
   createdAt: string;
+};
+
+export type DeliveryListItem = {
+  id: string;
+  eventId: string;
+  eventType: string;
+  endpointId: string;
+  endpointName: string;
+  endpointUrl: string;
+  status: DeliveryStatus;
+  attemptCount: number;
+  currentRunAttemptCount: number;
+  nextRetryAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  replayable: boolean;
+};
+
+export type DeliveryAttempt = {
+  id: string;
+  attemptNumber: number;
+  outcome: 'SUCCESS' | 'RETRYABLE_FAILURE' | 'PERMANENT_FAILURE';
+  httpStatus: number | null;
+  errorCode: string | null;
+  startedAt: string;
+  completedAt: string;
+};
+
+export type DeliveryPage = {
+  items: DeliveryListItem[];
+  page: number;
+  size: number;
+  totalElements: number;
+  totalPages: number;
+};
+
+export type DeliveryDetail = {
+  delivery: DeliveryListItem;
+  attempts: DeliveryAttempt[];
+};
+
+export type DeliveryReplayResponse = {
+  deliveryId: string;
+  status: DeliveryStatus;
+  attemptCount: number;
+  currentRunAttemptCount: number;
+};
+
+export type SystemSummary = {
+  status: string;
+  service: string;
+  generatedAt: string;
+  endpointCount: number;
+  eventCount: number;
+  pendingOutbox: number;
+  retryBacklog: number;
+  acceptedEvents: number;
+  deliveryIntents: number;
+  deliveriesByStatus: Record<string, number>;
 };
 
 export type ProblemDetail = {
@@ -114,13 +175,51 @@ export function createEndpoint(name: string, url: string, secret: string): Promi
   });
 }
 
+export function setEndpointEnabled(endpointId: string, enabled: boolean): Promise<WebhookEndpoint> {
+  return request<WebhookEndpoint>(`/api/webhook-endpoints/${encodeURIComponent(endpointId)}/enabled`, {
+    method: 'PATCH',
+    body: JSON.stringify({ enabled }),
+  });
+}
+
 export function createEvent(
   type: string,
   payload: Record<string, unknown>,
   endpointIds: string[],
+  idempotencyKey?: string,
 ): Promise<CreateEventResponse> {
+  const headers = idempotencyKey?.trim() ? { 'Idempotency-Key': idempotencyKey.trim() } : undefined;
   return request<CreateEventResponse>('/api/events', {
     method: 'POST',
+    headers,
     body: JSON.stringify({ type, payload, endpointIds }),
   });
+}
+
+export function loadDeliveries(
+  page = 0,
+  size = 20,
+  status?: DeliveryStatus,
+  signal?: AbortSignal,
+): Promise<DeliveryPage> {
+  const params = new URLSearchParams({ page: String(page), size: String(size) });
+  if (status) {
+    params.set('status', status);
+  }
+  return request<DeliveryPage>(`/api/deliveries?${params.toString()}`, { signal });
+}
+
+export function loadDelivery(deliveryId: string, signal?: AbortSignal): Promise<DeliveryDetail> {
+  return request<DeliveryDetail>(`/api/deliveries/${encodeURIComponent(deliveryId)}`, { signal });
+}
+
+export function replayDelivery(deliveryId: string): Promise<DeliveryReplayResponse> {
+  return request<DeliveryReplayResponse>(
+    `/api/deliveries/${encodeURIComponent(deliveryId)}/replay`,
+    { method: 'POST' },
+  );
+}
+
+export function loadSystemSummary(signal?: AbortSignal): Promise<SystemSummary> {
+  return request<SystemSummary>('/api/system/summary', { signal });
 }

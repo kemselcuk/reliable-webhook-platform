@@ -5,7 +5,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kemselcuk.webhook.WebhookPlatformApplication;
 import com.kemselcuk.webhook.domain.OutboxEvent;
 import com.kemselcuk.webhook.domain.OutboxStatus;
+import com.kemselcuk.webhook.domain.DeliveryAttempt;
+import com.kemselcuk.webhook.domain.DeliveryAttemptOutcome;
 import com.kemselcuk.webhook.domain.WebhookEndpoint;
+import com.kemselcuk.webhook.domain.repository.DeliveryAttemptRepository;
 import com.kemselcuk.webhook.domain.repository.DeliveryRepository;
 import com.kemselcuk.webhook.domain.repository.EventRepository;
 import com.kemselcuk.webhook.domain.repository.EventIdempotencyKeyRepository;
@@ -95,6 +98,9 @@ class WebhookApiIT {
     private DeliveryRepository deliveryRepository;
 
     @Autowired
+    private DeliveryAttemptRepository deliveryAttemptRepository;
+
+    @Autowired
     private OutboxEventRepository outboxEventRepository;
 
     @Autowired
@@ -109,6 +115,7 @@ class WebhookApiIT {
     void clearDatabase() {
         idempotencyKeyRepository.deleteAllInBatch();
         outboxEventRepository.deleteAllInBatch();
+        deliveryAttemptRepository.deleteAllInBatch();
         deliveryRepository.deleteAllInBatch();
         eventRepository.deleteAllInBatch();
         endpointRepository.deleteAllInBatch();
@@ -186,6 +193,98 @@ class WebhookApiIT {
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(response.getBody()).isNotNull();
         assertThat(response.getBody().get("size").asInt()).isEqualTo(100);
+    }
+
+    @Test
+    void togglesEndpointEnabledStateAndReturnsFreshUpdatedTimestamp() throws Exception {
+        JsonNode endpoint = createEndpoint("Toggle", "https://toggle.test/hooks");
+        Instant createdAt = Instant.parse(endpoint.get("createdAt").asText());
+
+        ResponseEntity<JsonNode> response = restTemplate.exchange(
+                url("/api/webhook-endpoints/" + endpoint.get("id").asText() + "/enabled"),
+                HttpMethod.PATCH,
+                new HttpEntity<>("{\"enabled\":false}", jsonHeaders()),
+                JsonNode.class
+        );
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().get("enabled").asBoolean()).isFalse();
+        assertThat(Instant.parse(response.getBody().get("updatedAt").asText()))
+                .isAfter(createdAt);
+    }
+
+    @Test
+    void listsDeliveryMetadataAndReturnsOrderedAttemptHistoryWithoutPayload() throws Exception {
+        JsonNode endpoint = createEndpoint("Delivery browser", "https://delivery-browser.test/hooks");
+        ResponseEntity<JsonNode> event = post(
+                "/api/events",
+                "{\"type\":\"order.created\",\"payload\":{\"orderId\":\"private\"},\"endpointIds\":[\"%s\"]}"
+                        .formatted(endpoint.get("id").asText())
+        );
+        String deliveryId = event.getBody().get("deliveryIds").get(0).asText();
+        var delivery = deliveryRepository.findById(UUID.fromString(deliveryId)).orElseThrow();
+        Instant started = Instant.parse("2026-01-01T00:00:00Z");
+        deliveryAttemptRepository.saveAllAndFlush(List.of(
+                DeliveryAttempt.create(delivery, 2, DeliveryAttemptOutcome.PERMANENT_FAILURE,
+                        400, "HTTP_400", started.plusSeconds(2), started.plusSeconds(3)),
+                DeliveryAttempt.create(delivery, 1, DeliveryAttemptOutcome.RETRYABLE_FAILURE,
+                        503, "HTTP_503", started, started.plusSeconds(1))
+        ));
+
+        ResponseEntity<JsonNode> list = restTemplate.exchange(
+                url("/api/deliveries?size=20"), HttpMethod.GET, HttpEntity.EMPTY, JsonNode.class);
+        assertThat(list.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(list.getBody()).isNotNull();
+        JsonNode item = list.getBody().get("items").get(0);
+        assertThat(item.get("id").asText()).isEqualTo(deliveryId);
+        assertThat(item.get("eventType").asText()).isEqualTo("order.created");
+        assertThat(item.has("payload")).isFalse();
+
+        ResponseEntity<JsonNode> detail = restTemplate.exchange(
+                url("/api/deliveries/" + deliveryId), HttpMethod.GET, HttpEntity.EMPTY, JsonNode.class);
+        assertThat(detail.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(detail.getBody()).isNotNull();
+        assertThat(detail.getBody().has("payload")).isFalse();
+        assertThat(detail.getBody().get("attempts").get(0).get("attemptNumber").asInt()).isEqualTo(1);
+        assertThat(detail.getBody().get("attempts").get(1).get("attemptNumber").asInt()).isEqualTo(2);
+        assertThat(detail.getBody().toString()).doesNotContain("private");
+        assertThat(detail.getBody().toString()).doesNotContain(TEST_SECRET);
+    }
+
+    @Test
+    void exposesBoundedSystemSummaryWithoutPayloadOrSecret() throws Exception {
+        createEndpoint("Summary", "https://summary.test/hooks");
+
+        ResponseEntity<JsonNode> response = restTemplate.exchange(
+                url("/api/system/summary"), HttpMethod.GET, HttpEntity.EMPTY, JsonNode.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().get("status").asText()).isEqualTo("UP");
+        assertThat(response.getBody().get("endpointCount").asLong()).isEqualTo(1);
+        assertThat(response.getBody().get("deliveriesByStatus").fieldNames()).toIterable()
+                .containsExactly("PENDING", "PROCESSING", "RETRY_SCHEDULED", "SUCCESS", "FAILED", "DEAD");
+        assertThat(response.getBody().toString()).doesNotContain(TEST_SECRET);
+    }
+
+    @Test
+    void validatesDeliveryReadParametersAndMissingDetails() {
+        ResponseEntity<JsonNode> negativePage = restTemplate.exchange(
+                url("/api/deliveries?page=-1"), HttpMethod.GET, HttpEntity.EMPTY, JsonNode.class);
+        assertThat(negativePage.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(negativePage.getBody()).isNotNull();
+        assertThat(negativePage.getBody().get("code").asText()).isEqualTo("VALIDATION_ERROR");
+
+        ResponseEntity<JsonNode> invalidStatus = restTemplate.exchange(
+                url("/api/deliveries?status=not-a-status"), HttpMethod.GET, HttpEntity.EMPTY, JsonNode.class);
+        assertThat(invalidStatus.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+
+        ResponseEntity<JsonNode> missing = restTemplate.exchange(
+                url("/api/deliveries/" + UUID.randomUUID()), HttpMethod.GET, HttpEntity.EMPTY, JsonNode.class);
+        assertThat(missing.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(missing.getBody()).isNotNull();
+        assertThat(missing.getBody().get("code").asText()).isEqualTo("DELIVERY_NOT_FOUND");
     }
 
     @Test
@@ -587,8 +686,7 @@ class WebhookApiIT {
     }
 
     private ResponseEntity<JsonNode> postWithKey(String path, String idempotencyKey, String body) {
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
+        HttpHeaders headers = jsonHeaders();
         if (idempotencyKey != null) {
             headers.set("Idempotency-Key", idempotencyKey);
         }
@@ -598,6 +696,12 @@ class WebhookApiIT {
                 new HttpEntity<>(body, headers),
                 JsonNode.class
         );
+    }
+
+    private HttpHeaders jsonHeaders() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        return headers;
     }
 
     private List<ResponseEntity<JsonNode>> concurrentlySubmit(
