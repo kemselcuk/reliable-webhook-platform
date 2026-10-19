@@ -286,3 +286,7 @@ Use a focused `feature/`, `fix/`, `refactor/`, or `docs/` branch for meaningful 
 ## Current limitations
 
 Authentication (beyond webhook signing), secret rotation, and hosted deployment remain later or intentionally deferred work. The local stack is not an internet-facing production deployment: add authentication, TLS termination, request-size/rate limits, and outbound network policy before exposing it. The outbox and worker are both at-least-once: a crash around Kafka acknowledgement or external HTTP completion can produce duplicate commands or requests. Lease expiry and claim tokens prevent stale workers from overwriting newer state, and a duplicate command received after `SUCCESS` is terminal and does not resend the request. HTTP connect/response timeouts, worker concurrency, scheduler/publisher batches, and local container resources are bounded.
+
+## License
+
+Released under the [MIT License](LICENSE).
